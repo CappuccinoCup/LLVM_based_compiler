@@ -1,0 +1,5 @@
+int foo(int a, double b){
+	int c;
+	c = a + b;
+	return c;
+}
