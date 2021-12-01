@@ -86,7 +86,7 @@ static int gettok() {
     // Get next word.
     std::string word = "";
     word.push_back(LastChar);
-    // read any alpha and digit
+    // Read any alpha and digit.
     LastChar = fgetc(fip);
     while (isalpha(LastChar) || isdigit(LastChar)) {
       word.push_back(LastChar);
@@ -449,6 +449,7 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
   std::vector<std::string> DeclNames;
   DeclNames.push_back(IdentifierStr);
   getNextToken(); // eat <ident>
+
   while (CurTok == ',') {
     getNextToken(); // eat ','
     if (CurTok != tok_identifier)
@@ -456,6 +457,11 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
     DeclNames.push_back(IdentifierStr);
     getNextToken(); // eat <ident>
   }
+
+  if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+  }
+  getNextToken(); // eat ';'
 
   return std::make_unique<DeclStmtAST>(FnName, DeclType, DeclNames);
 }
@@ -473,6 +479,12 @@ static std::unique_ptr<StmtAST> ParseSimpStatement() {
   getNextToken(); // eat '='
 
   auto E = ParseExpression(0);
+
+  if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+  }
+  getNextToken(); // eat ';'
+
   return std::make_unique<SimpStmtAST>(ident, std::move(E));
 }
 
@@ -481,7 +493,14 @@ static std::unique_ptr<StmtAST> ParseSimpStatement() {
 /// <return>
 static std::unique_ptr<StmtAST> ParseRetStatement() {
   getNextToken(); // eat "return"
+
   auto E = ParseExpression(0);
+
+  if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+  }
+  getNextToken(); // eat ';'
+
   return std::make_unique<RetStmtAST>(std::move(E));
 }
 
@@ -493,16 +512,12 @@ static std::unique_ptr<StmtAST> ParseStatement(std::string FnName) {
   {
   case tok_def:
     return ParseDeclStatement(FnName);
-    break;
   case tok_identifier:
     return ParseSimpStatement();
-    break;
   case tok_return:
     return ParseRetStatement();
-    break;
   default:
     return LogErrorS("Invalid statement input");
-    break;
   }
 }
 
@@ -561,17 +576,9 @@ static std::unique_ptr<BodyAST> ParseBody(std::string FnName) {
   while (CurTok != tok_return)
   {
     auto S = ParseStatement(FnName);
-    if (CurTok != ';') {
-      return LogErrorB("Expected ';' after a statement");
-    }
-    getNextToken(); // eat ';'
     Stmts.push_back(std::move(S));
   }
   auto RetStmt = ParseRetStatement();
-  if (CurTok != ';') {
-      return LogErrorB("Expected ';' after a statement");
-  }
-  getNextToken(); // eat ';'
   Stmts.push_back(std::move(RetStmt));
   return std::make_unique<BodyAST>(std::move(Stmts));
 }
@@ -825,6 +832,8 @@ Value *DeclStmtAST::codegen() {
 
 Value *SimpStmtAST::codegen() {
   Value *R = RHS->codegen();
+  if (!R)
+    return nullptr;
 
   // Look up the name.
   AllocaInst *Variable = NamedValues[Ident];
