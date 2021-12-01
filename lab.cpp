@@ -49,6 +49,9 @@ enum Token {
   tok_identifier = -4,
   tok_number_int = -5,
   tok_number_double = -6,
+
+  // function
+  tok_return = -7,
 };
 
 enum Types {
@@ -57,12 +60,12 @@ enum Types {
 };
 
 
-static std::map<std::string, int> TypeValues;  //map typeString to int
+static std::map<std::string, int> TypeValues; // Map typeString to int
 static FILE *fip;
-static std::string IdentifierStr; // Filled in if tok_identifier
-static int NumValI;             // Filled in if tok_number_int
-static double NumValD;             // Filled in if tok_number_double
-static int ValType;               // Filled in if tok_number_double
+static std::string IdentifierStr;             // Filled in if tok_identifier
+static int NumValI;                           // Filled in if tok_number_int
+static double NumValD;                        // Filled in if tok_number_double
+static int ValType;                           // Filled in if tok_def
 
 static void InitializeTypeValue(){
   TypeValues["int"] = 1;
@@ -71,11 +74,6 @@ static void InitializeTypeValue(){
 
 /// gettok - Return the next token from standard input.
 static int gettok() {
-///*****************************************
-
-///use gettok implemented in lab1  
-
-///*****************************************
   static int LastChar = ' ';
   std::map<std::string, int>::iterator iter;
 
@@ -85,21 +83,31 @@ static int gettok() {
 
 
   if (isalpha(LastChar)) {
+    // Get next word.
     std::string word = "";
     word.push_back(LastChar);
-
+    // read any alpha and digit
     LastChar = fgetc(fip);
     while (isalpha(LastChar) || isdigit(LastChar)) {
       word.push_back(LastChar);
       LastChar = fgetc(fip);
     }
 
+    // int & double
     if (word == "int" || word == "double") {
       ValType = TypeValues[word];
       return tok_def;
     }
+
+    // extern
     if (word == "extern") 
       return tok_extern;
+
+    // return
+    if (word == "return")
+      return tok_return;
+
+    // identifier
     IdentifierStr = word;
     return tok_identifier;
   }
@@ -110,6 +118,7 @@ static int gettok() {
     double decimal = 0;
     int tok_type = tok_number_int;
 
+    // Get next number.
     while (isdigit(LastChar) || LastChar == '.') {
       if (LastChar == '.') {
         if (tok_type == tok_number_int) 
@@ -212,6 +221,50 @@ public:
   Value *codegen() override;
 };
 
+/// StmtAST - Base class for all statement nodes.
+class StmtAST {
+public:
+  virtual ~StmtAST() = default;
+
+  virtual Value *codegen() = 0;
+};
+
+/// DeclStmtAST - Statement class for declaration.
+class DeclStmtAST : public StmtAST {
+  std::string FnName;
+  int DeclType;
+  std::vector<std::string> Decls;
+
+public:
+  DeclStmtAST(std::string FnName, int DeclType, std::vector<std::string> Decls)
+    : FnName(FnName), DeclType(DeclType), Decls(Decls) {}
+
+  Value *codegen();
+};
+
+/// SimpStmtAST - Statement class for simple statement "=".
+class SimpStmtAST : public StmtAST {
+  std::string Ident;
+  std::unique_ptr<ExprAST> RHS;
+
+public:
+  SimpStmtAST(std::string Ident, std::unique_ptr<ExprAST> RHS)
+    : Ident(Ident), RHS(std::move(RHS)) {}
+
+  Value *codegen();  
+};
+
+/// RetStmtAST - Statement class for return statement.
+class RetStmtAST : public StmtAST {
+  std::unique_ptr<ExprAST> Ret;
+
+public:
+  RetStmtAST(std::unique_ptr<ExprAST> Ret)
+    : Ret(std::move(Ret)) {}
+
+  Value *codegen();  
+};
+
 /// PrototypeAST - This class represents the "prototype" for a function,
 /// which captures its name, and its argument names (thus implicitly the number
 /// of arguments the function takes).
@@ -231,14 +284,25 @@ public:
   const std::vector<int> &getArgTypes() {return ArgTypes;}
 };
 
+/// BodyAST - This class represents the body for a function.
+class BodyAST {
+  std::vector<std::unique_ptr<StmtAST>> Stmts;
+
+public:
+  BodyAST(std::vector<std::unique_ptr<StmtAST>> Stmts)
+      : Stmts(std::move(Stmts)) {}
+
+  Value *codegen();      
+};
+
 /// FunctionAST - This class represents a function definition itself.
 class FunctionAST {
   std::unique_ptr<PrototypeAST> Proto;
-  std::unique_ptr<ExprAST> Body;
+  std::unique_ptr<BodyAST> Body;
 
 public:
   FunctionAST(std::unique_ptr<PrototypeAST> Proto,
-              std::unique_ptr<ExprAST> Body)
+              std::unique_ptr<BodyAST> Body)
       : Proto(std::move(Proto)), Body(std::move(Body)) {}
 
   Function *codegen();
@@ -260,11 +324,7 @@ static int getNextToken() { return CurTok = gettok(); }
 /// defined.
 static std::map<char, int> BinopPrecedence;
 
-///**********************************************
 
-///use Parse*() function implemented in lab2
-
-///**********************************************
 /// LogError* - These are little helper functions for error handling.
 /// you can add additional function to help you log error. 
 std::unique_ptr<ExprAST> LogError(const char *Str) {
@@ -278,6 +338,16 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 }
 
 std::unique_ptr<FunctionAST> LogErrorF(const char *Str) {
+  LogError(Str);
+  return nullptr;
+}
+
+std::unique_ptr<BodyAST> LogErrorB(const char *Str) {
+  LogError(Str);
+  return nullptr;
+}
+
+std::unique_ptr<StmtAST> LogErrorS(const char *Str) {
   LogError(Str);
   return nullptr;
 }
@@ -304,22 +374,25 @@ static std::unique_ptr<ExprAST> ParseNumberExpr(int NumberType) {
 /// <ident> or <callee>
 static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string ident = IdentifierStr;
-  getNextToken(); // eat identifier.
+  getNextToken(); // eat identifier
+
   if (CurTok != '(')
     return std::make_unique<VariableExprAST>(ident);
-  
-  getNextToken(); // eat '('.
+  getNextToken(); // eat '('
+
   std::vector<std::unique_ptr<ExprAST>> Args;
   if (CurTok != ')') {
     Args.push_back(ParseExpression(0));
     while (CurTok == ',') {
-      getNextToken(); // eat ','.
+      getNextToken(); // eat ','
       Args.push_back(ParseExpression(0));
     }
   }
+
   if (CurTok != ')')
     return LogError("Expected ')' in callee");
-  getNextToken(); // eat ')'.
+  getNextToken(); // eat ')'
+
   return std::make_unique<CallExprAST>(ident, std::move(Args));
 }
 
@@ -331,11 +404,11 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
   switch (CurTok)
   {
   case '(':
-    getNextToken(); // eat '('.
+    getNextToken(); // eat '('
     Result = ParseExpression(0);
     if (CurTok != ')')
       return LogError("Expected ')' in expression");
-    getNextToken(); // eat ')'.
+    getNextToken(); // eat ')'
     break;
   case tok_number_int:
     Result = ParseNumberExpr(type_int);
@@ -361,15 +434,76 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
     auto Right = ParseExpression(rp);
     Result = std::make_unique<BinaryExprAST>(op, std::move(Result), std::move(Right));
   }
+
   return Result;
+}
+
+/// declaration statement
+/// <decl>
+static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
+  int DeclType = ValType;
+  getNextToken(); // eat <type>
+
+  if (CurTok != tok_identifier)
+    return LogErrorS("Expected variable name in declaration");
+  std::vector<std::string> DeclNames;
+  DeclNames.push_back(IdentifierStr);
+  getNextToken(); // eat <ident>
+  while (CurTok == ',') {
+    getNextToken(); // eat ','
+    if (CurTok != tok_identifier)
+      return LogErrorS("Expected valid variable name in declaration");
+    DeclNames.push_back(IdentifierStr);
+    getNextToken(); // eat <ident>
+  }
+
+  return std::make_unique<DeclStmtAST>(FnName, DeclType, DeclNames);
+}
+
+
+/// simple statement
+/// <simp>
+static std::unique_ptr<StmtAST> ParseSimpStatement() {
+  std::string ident = IdentifierStr;
+  getNextToken(); // eat <ident>
+
+  if (CurTok != '=') {
+    return LogErrorS("Expected '=' in simple statement");
+  }
+  getNextToken(); // eat '='
+
+  auto E = ParseExpression(0);
+  return std::make_unique<SimpStmtAST>(ident, std::move(E));
+}
+
+
+/// return statement
+/// <return>
+static std::unique_ptr<StmtAST> ParseRetStatement() {
+  getNextToken(); // eat "return"
+  auto E = ParseExpression(0);
+  return std::make_unique<RetStmtAST>(std::move(E));
 }
 
 
 /// statement 
 /// <stmt>
-static std::unique_ptr<ExprAST> ParseStatement() {
-  auto E = ParseExpression(0);
-  return E;
+static std::unique_ptr<StmtAST> ParseStatement(std::string FnName) {
+  switch (CurTok)
+  {
+  case tok_def:
+    return ParseDeclStatement(FnName);
+    break;
+  case tok_identifier:
+    return ParseSimpStatement();
+    break;
+  case tok_return:
+    return ParseRetStatement();
+    break;
+  default:
+    return LogErrorS("Invalid statement input");
+    break;
+  }
 }
 
 
@@ -386,37 +520,60 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
 
   if (CurTok != '(')
     return LogErrorP("Expected '(' in prototype");
-  getNextToken(); // eat '('.
+  getNextToken(); // eat '('
 
   std::vector<std::string> ArgNames;
   std::vector<int> ArgTypes;
   if (CurTok == tok_def) {
     ArgTypes.push_back(ValType);
-    getNextToken(); // eat <type>.
+    getNextToken(); // eat <type>
     if (CurTok != tok_identifier)
       return LogErrorP("Expected valid arg name in paramlist");
     ArgNames.push_back(IdentifierStr);
-    getNextToken(); // eat <ident>.
+    getNextToken(); // eat <ident>
     while (CurTok == ',') {
-      getNextToken(); // eat ','.
+      getNextToken(); // eat ','
       if (CurTok != tok_def)
         return LogErrorP("Expected arg type in paramlist");
       ArgTypes.push_back(ValType);
-      getNextToken(); // eat <type>.
+      getNextToken(); // eat <type>
       if (CurTok != tok_identifier)
         return LogErrorP("Expected valid arg name in paramlist");
       ArgNames.push_back(IdentifierStr);
-      getNextToken(); // eat <ident>.
+      getNextToken(); // eat <ident>
     }
   }
   
   if (CurTok != ')')
     return LogErrorP("Expected ')' in prototype");
 
-  // success.
-  getNextToken(); // eat ')'.
+  // Success.
+  getNextToken(); // eat ')'
 
   return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+}
+
+
+/// body
+/// <body>
+static std::unique_ptr<BodyAST> ParseBody(std::string FnName) {
+  std::vector<std::unique_ptr<StmtAST>> Stmts;
+  while (CurTok != tok_return)
+  {
+    auto S = ParseStatement(FnName);
+    if (CurTok != ';') {
+      return LogErrorB("Expected ';' after a statement");
+    }
+    getNextToken(); // eat ';'
+    Stmts.push_back(std::move(S));
+  }
+  auto RetStmt = ParseRetStatement();
+  if (CurTok != ';') {
+      return LogErrorB("Expected ';' after a statement");
+  }
+  getNextToken(); // eat ';'
+  Stmts.push_back(std::move(RetStmt));
+  return std::make_unique<BodyAST>(std::move(Stmts));
 }
 
 
@@ -427,7 +584,7 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
   if (CurTok != '{')
     return LogErrorF("Expected '{' in function body");
   getNextToken(); // eat '{'
-  auto Body = ParseStatement();
+  auto Body = ParseBody(Proto->getName());
   if (CurTok != '}')
     return LogErrorF("Expected '}' in function body");
   getNextToken(); // eat '}'
@@ -438,7 +595,7 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
 /// external ::= 'extern' prototype
 /// <gdecl>
 static std::unique_ptr<PrototypeAST> ParseExtern() {
-  int isdef = getNextToken(); // eat extern.s
+  int isdef = getNextToken(); // eat "extern"
   if (isdef != tok_def)
     return LogErrorP("Expected type declaration");
   auto Proto = ParsePrototype();
@@ -456,8 +613,7 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<Module> TheModule;
 static std::unique_ptr<IRBuilder<>> Builder;
-static std::map<std::string, Value *> NamedValues;  // used to store the variables in the Function.
-                                                    // in this lab it only store the args.
+static std::map<std::string, AllocaInst*> NamedValues;
 static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
 
@@ -489,32 +645,34 @@ Function *getFunction(std::string Name) {
 }
 
 
-/*TODO: Finish the codegen() function to implement the Code Generation part.
-  We provide some implemented codegen function for reference, like 
-  NumberDoubleExprAST::codegen(), Value *VariableExprAST::codegen(), and you
-  can use these functions directly. 
-*/
+/// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of
+/// the function.  This is used for mutable variables etc.
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
+                                          const std::string &VarName,
+                                          Type *ty) {
+  IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
+                  TheFunction->getEntryBlock().begin());
+  return TmpB.CreateAlloca(ty, nullptr, VarName.c_str());
+}
 
 
-//example of codegen()
 Value *NumberDoubleExprAST::codegen() {
   return ConstantFP::get(*TheContext, APFloat(Val));
 }
 
 
-//example of codegen()
 Value *NumberIntExprAST::codegen() {
   return ConstantInt::get(*TheContext, APInt(32,Val));
 }
 
 
-//example of codegen()
 Value *VariableExprAST::codegen() {
   // Look this variable up in the function.
   Value *V = NamedValues[Name];
   if (!V)
     return LogErrorV("Unknown variable name");
-  return V;
+  // Load the value.  
+  return Builder->CreateLoad(V, Name.c_str());
 }
 
 
@@ -526,7 +684,7 @@ Value *BinaryExprAST::codegen() {
   if (!R)
     return nullptr;
 
-  // do value type conversion before binary operation
+  // Do value type conversion before binary operation.
   bool isIntOp;
   if (L->getType()->isDoubleTy()) {
     if (R->getType()->isIntegerTy()) 
@@ -563,7 +721,7 @@ Value *BinaryExprAST::codegen() {
       else
         return Builder->CreateFMul(L, R, "multmp");
     case '<':
-      // lack of bool type (i1), so use "double" type as cmp return type...
+      // Lack of bool type (i1), so use "double" type as cmp return type...
       if (isIntOp)
         return Builder->CreateUIToFP(Builder->CreateICmpULT(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
@@ -636,6 +794,59 @@ Function *PrototypeAST::codegen() {
 }
 
 
+Value *BodyAST::codegen() {
+  Value *Result;
+  for (auto &S : Stmts) {
+    Result = S->codegen();
+  }
+  return Result;
+}
+
+
+Value *DeclStmtAST::codegen() {
+  Function *TheFunction = getFunction(FnName);
+
+  llvm::Type *ty;
+  if (DeclType == type_int)
+    ty = Type::getInt32Ty(*TheContext);
+  else if (DeclType == type_double)
+    ty = Type::getDoubleTy(*TheContext);
+
+  for (auto &Decl : Decls) {
+    // Create an alloca for this variable.
+    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Decl, ty);
+    // Add arguments to variable symbol table.
+    NamedValues[Decl] = Alloca;
+  }
+
+  return nullptr;
+}
+
+
+Value *SimpStmtAST::codegen() {
+  Value *R = RHS->codegen();
+
+  // Look up the name.
+  AllocaInst *Variable = NamedValues[Ident];
+  if (!Variable)
+    return LogErrorV("Unknown variable name");
+  
+  // Type casting.
+  if (Variable->getAllocatedType()->isIntegerTy() && R->getType()->isDoubleTy())
+    R = Builder->CreateFPToUI(R, Type::getInt32Ty(*TheContext), "tmp");
+  if (Variable->getAllocatedType()->isDoubleTy() && R->getType()->isIntegerTy())
+    R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
+
+  Builder->CreateStore(R, Variable);
+  return nullptr;
+}
+
+
+Value *RetStmtAST::codegen() {
+  return Ret->codegen();
+}
+
+
 Function *FunctionAST::codegen() {
   // Transfer ownership of the prototype to the FunctionProtos map, but keep a
   // reference to it for use below.
@@ -650,12 +861,15 @@ Function *FunctionAST::codegen() {
   Builder->SetInsertPoint(BB);
 
   NamedValues.clear();
-  for (auto &Arg : TheFunction->args())
-    NamedValues[std::string(Arg.getName())] = &Arg;
+  for (auto &Arg : TheFunction->args()) {
+    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, std::string(Arg.getName()), Arg.getType());
+    Builder->CreateStore(&Arg, Alloca);
+    NamedValues[std::string(Arg.getName())] = Alloca;
+  }
 
   if (Value *RetVal = Body->codegen()) {
     //****************
-    //correctly create the RetVal use Builder.
+    // Correctly create the RetVal use Builder.
     //****************
     if (P.getReturnType() == type_double && RetVal->getType()->isIntegerTy())
       RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
