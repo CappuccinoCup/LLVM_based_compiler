@@ -1,0 +1,52 @@
+extern int nop();
+
+unary ! 50 int(int a) {
+    if (a == 0) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+binary > 10 int(int a, int b) {
+    if (a <= b) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+int factorial(int n) {
+    # factorial(0) == 1
+    if (!n)
+        return 1;
+
+    # Compute factorial using two methods.
+    int result = 0, a;
+    int result1 = 1, result2 = 1;
+    a = n;
+
+    # Method1.
+    while (!(a == 0)) {
+        result1 = result1 * a;
+        a = a - 1;
+    }
+
+    # Method2.
+    for (int b = n; b > 0; b = b - 1)
+        result2 = result2 * b;
+
+    # Compare results.
+    if (result1 == result2)
+        result = result1;
+
+    # If result == 0, there must be anything error.
+    return result;
+}
+
+double pretendToDoSomething(int n) {
+    double a, result;
+    a = n * 5 + n * 2;
+    result = a - n;
+    return result - 5 * n;
+}

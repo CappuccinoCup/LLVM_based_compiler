@@ -1,2 +1,7 @@
-foo of 1, 4.2 is :5
-foo of 3, 4.0 is :7
+fib of 1 is :1
+fib of 2 is :1
+fib of 3 is :2
+fib of 4 is :3
+fib of 5 is :5
+fib of 6 is :8
+fib of 7 is :13

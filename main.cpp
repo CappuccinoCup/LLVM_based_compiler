@@ -1,11 +1,16 @@
 #include <iostream>
   
 extern "C" {
-	  int foo(int, double);
+	  int fib(int);
 }
 
 int main(){
-	std::cout << "foo of 1, 4.2 is :" << foo(1,4.2) << std::endl;
-	std::cout << "foo of 3, 4.0 is :" << foo(3,4.0) << std::endl;
+	std::cout << "fib of 1 is :" << fib(1) << std::endl;
+	std::cout << "fib of 2 is :" << fib(2) << std::endl;
+	std::cout << "fib of 3 is :" << fib(3) << std::endl;
+	std::cout << "fib of 4 is :" << fib(4) << std::endl;
+	std::cout << "fib of 5 is :" << fib(5) << std::endl;
+	std::cout << "fib of 6 is :" << fib(6) << std::endl;
+	std::cout << "fib of 7 is :" << fib(7) << std::endl;
 }
 
