@@ -4,7 +4,7 @@
 FDU 2021 autumn semester Compiler course serial lab. The goal is to complete a LLVM based compiler that can compile C-like simple program.
 
 ## Usage
-Environment configuration please refer to /document/lab3.pdf
+Environment configuration please refer to /document/lab3.pdf.
 
 To compile and run:
 
@@ -61,13 +61,13 @@ Our goal is to complete these rules:
 
 Compared to the baseline of Lab5, we add these features:
 
-1. Support type "char", e.g., char a; a = 'a';
+1. Support type "char", e.g., char a; a = 'a';.
 2. Support control flow "for".
 3. Support a block instead of a single statement in control flow.
-4. Support assignment in declaration statement, e.g., char a = 'a', b = 'b';
+4. Support assignment in declaration statement, e.g., char a = 'a', b = 'b';.
 5. Support binary operation "==" & "<=".
-6. Support comment start with "#"
-7. Support user-defined unary & binary operators. (\<def\> above)
+6. Support comment start with "#".
+7. Support user-defined unary & binary operators. (\<def\> above).
 
 
 ## Files
