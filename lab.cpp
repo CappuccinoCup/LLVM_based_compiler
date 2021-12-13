@@ -51,16 +51,19 @@ enum Token {
   tok_number_double = -6,
   tok_char = -7,
 
+  // operation
+  tok_op = -8,
+
   // function
-  tok_return = -8,
   tok_if = -9,
   tok_else = -10,
   tok_while = -11,
   tok_for = -12,
+  tok_return = -13,
 
   // user-defined
-  tok_unary_def = -13,
-  tok_binary_def = -14,
+  tok_unary_def = -14,
+  tok_binary_def = -15,
 };
 
 enum Types {
@@ -69,19 +72,39 @@ enum Types {
   type_char = 3,
 };
 
+enum Ops {
+  op_add = 1,   // +
+  op_sub = 2,   // -
+  op_mul = 3,   // *
+  op_lt = 4,    // <
+  op_eq = 5,    // ==
+  op_le = 6,    // <=
+};
+
 
 static std::map<std::string, int> TypeValues; // Map typeString to int
+static std::map<std::string, int> OpValues;   // Map opString to int
 static FILE *fip;
 static std::string IdentifierStr;             // Filled in if tok_identifier
 static int NumValI;                           // Filled in if tok_number_int
 static double NumValD;                        // Filled in if tok_number_double
 static int ValType;                           // Filled in if tok_def
 static int CharVal;                           // Filled in if tok_char
+static int OpVal;                             // Filled in if tok_op
 
 static void InitializeTypeValue(){
-  TypeValues["int"] = 1;
-  TypeValues["double"] = 2;
-  TypeValues["char"] = 3;
+  TypeValues["int"] = type_int;
+  TypeValues["double"] = type_double;
+  TypeValues["char"] = type_char;
+}
+
+static void InitializeOpValue(){
+  OpValues["+"] = op_add;
+  OpValues["-"] = op_sub;
+  OpValues["*"] = op_mul;
+  OpValues["<"] = op_lt;
+  OpValues["=="] = op_eq;
+  OpValues["<="] = op_le;
 }
 
 /// gettok - Return the next token from standard input.
@@ -186,6 +209,18 @@ static int gettok() {
     return tok_char;
   }
 
+  if (LastChar == '+' || LastChar == '-' || LastChar == '*' || LastChar == '<' || LastChar == '=') {
+    std::string op = "";
+    op.push_back(LastChar);
+    LastChar = fgetc(fip);
+    if ((op == "<" || op == "=") && LastChar == '=') {
+      op.push_back(LastChar);
+      LastChar = fgetc(fip);
+    }
+    OpVal = OpValues[op];
+    return tok_op;
+  }
+
   if (LastChar == '#') {
     // Comment util end of line.
     do
@@ -260,11 +295,11 @@ public:
 
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
-  char Op;
+  int Op;
   std::unique_ptr<ExprAST> LHS, RHS;
 
 public:
-  BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS,
+  BinaryExprAST(int Op, std::unique_ptr<ExprAST> LHS,
                 std::unique_ptr<ExprAST> RHS)
       : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
 
@@ -385,7 +420,7 @@ static int getNextToken() { return CurTok = gettok(); }
 
 /// BinopPrecedence - This holds the precedence for each binary operator that is
 /// defined.
-static std::map<char, int> BinopPrecedence;
+static std::map<int, int> BinopPrecedence;
 
 
 /// LogError* - These are little helper functions for error handling.
@@ -498,9 +533,9 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
     break;
   }
 
-  while (CurTok == '+' || CurTok == '-' || CurTok == '*' || CurTok == '<') {
-    char op = CurTok;
-    int rp = BinopPrecedence[op];
+  while (CurTok == tok_op) {
+    int op = OpVal;
+    int rp = BinopPrecedence[OpVal];
     int lp = rp - 1;
     if (lp < precedence)
       break;
@@ -791,27 +826,37 @@ Value *BinaryExprAST::codegen() {
   }
 
   switch (Op) {
-    case '+':
+    case op_add:
       if (isIntOp) 
         return Builder->CreateAdd(L, R, "addtmp");
       else
         return Builder->CreateFAdd(L, R, "addtmp");
-    case '-':
+    case op_sub:
       if (isIntOp)
         return Builder->CreateSub(L, R, "subtmp");
       else
         return Builder->CreateFSub(L, R, "subtmp");
-    case '*':
+    case op_mul:
       if (isIntOp)
         return Builder->CreateMul(L, R, "multmp");
       else
         return Builder->CreateFMul(L, R, "multmp");
-    case '<':
+    case op_lt:
       // Lack of bool type (i1), so use "double" type as cmp return type...
       if (isIntOp)
         return Builder->CreateUIToFP(Builder->CreateICmpULT(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpULT(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+    case op_eq:
+      if (isIntOp)
+        return Builder->CreateUIToFP(Builder->CreateICmpEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+      else
+        return Builder->CreateUIToFP(Builder->CreateFCmpUEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+    case op_le:
+      if (isIntOp)
+        return Builder->CreateUIToFP(Builder->CreateICmpULE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+      else
+        return Builder->CreateUIToFP(Builder->CreateFCmpULE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     default:
       return LogErrorV("Unknown binary opreation");
   }
@@ -1063,11 +1108,14 @@ int main(int argc, char* argv[]) {
   }
 
   InitializeTypeValue();
+  InitializeOpValue();
 
-  BinopPrecedence['<'] = 10;
-  BinopPrecedence['+'] = 20;
-  BinopPrecedence['-'] = 20;
-  BinopPrecedence['*'] = 40; // highest.
+  BinopPrecedence[op_eq] = 10;
+  BinopPrecedence[op_le] = 10;
+  BinopPrecedence[op_lt] = 10;
+  BinopPrecedence[op_add] = 20;
+  BinopPrecedence[op_sub] = 20;
+  BinopPrecedence[op_mul] = 40; // highest.
   getNextToken();
 
   InitializeModuleAndPassManager();
