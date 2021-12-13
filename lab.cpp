@@ -563,25 +563,14 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
 /// <decl>
 static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
   int DeclType = ValType;
-  getNextToken(); // eat <type>
-
-  if (CurTok != tok_identifier)
-    return LogErrorS("Expected variable name in declaration");
+  
   std::vector<std::string> DeclNames;
   std::vector<std::unique_ptr<ExprAST>> Vals;
-  DeclNames.push_back(IdentifierStr);
-  getNextToken(); // eat <ident>
-  if (CurTok == '=') {
-    getNextToken(); // eat '='
-    Vals.push_back(ParseExpression(0));
-  } else {
-    Vals.push_back(nullptr);
-  }
 
-  while (CurTok == ',') {
-    getNextToken(); // eat ','
+  do {
+    getNextToken(); // first eat <type>, then eat ','
     if (CurTok != tok_identifier)
-      return LogErrorS("Expected valid variable name in declaration");
+      return LogErrorS("Expected variable name in declaration");
     DeclNames.push_back(IdentifierStr);
     getNextToken(); // eat <ident>
     if (CurTok == '=') {
@@ -590,7 +579,7 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
     } else {
       Vals.push_back(nullptr);
     }
-  }
+  } while (CurTok == ',');
 
   if (CurTok != ';') {
     return LogErrorS("Expected ';' after a statement");
