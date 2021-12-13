@@ -9,9 +9,8 @@ extern "C" {
 //     if (!n)
 //         return 1;
 
-//     int result = 0, a;
+//     int result = 0, a = n;
 //     int result1 = 1, result2 = 1;
-//     a = n;
 
 //     while (!(a == 0)) {
 //         result1 = result1 * a;

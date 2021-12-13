@@ -35,7 +35,7 @@ Our goal is to complete these rules:
 <body>			::= {[<stmt>]*}
 <stmt>			::= <decl>;|<simp>;|<control>|<return>;
 
-<decl>			::= <type><ident>[=<const>][,<ident>[=<const>]]*
+<decl>			::= <type><ident>[=<exp>][,<ident>[=<exp>]]*
 <simp>			::= <ident>=<exp>
 <control>		::= if(<exp>)<content>[else<content>]
 					|while(<exp>)<content>

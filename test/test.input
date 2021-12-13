@@ -22,9 +22,8 @@ int factorial(int n) {
         return 1;
 
     # Compute factorial using two methods.
-    int result = 0, a;
+    int result = 0, a = n;
     int result1 = 1, result2 = 1;
-    a = n;
 
     # Method1.
     while (!(a == 0)) {

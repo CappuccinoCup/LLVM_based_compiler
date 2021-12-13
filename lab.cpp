@@ -197,6 +197,7 @@ static int gettok() {
     return tok_type;
   }
 
+  // const char
   if (LastChar == '\'') {
     LastChar = fgetc(fip);
     int character = LastChar;
@@ -209,20 +210,30 @@ static int gettok() {
     return tok_char;
   }
 
-  if (LastChar == '+' || LastChar == '-' || LastChar == '*' || LastChar == '<' || LastChar == '=') {
+  // operations
+  if (LastChar == '+' || LastChar == '-' || LastChar == '*' || LastChar == '<') {
     std::string op = "";
     op.push_back(LastChar);
     LastChar = fgetc(fip);
-    if ((op == "<" || op == "=") && LastChar == '=') {
+    if (op == "<" && LastChar == '=') {
       op.push_back(LastChar);
       LastChar = fgetc(fip);
     }
     OpVal = OpValues[op];
     return tok_op;
   }
+  if (LastChar == '=') {
+    LastChar = fgetc(fip);
+    if (LastChar == '=') {
+      OpVal = OpValues["=="];
+      return tok_op;
+    } else {
+      return '=';
+    }
+  }
 
+  // Comment util end of line.
   if (LastChar == '#') {
-    // Comment util end of line.
     do
       LastChar = fgetc(fip);
     while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
@@ -332,10 +343,11 @@ class DeclStmtAST : public StmtAST {
   std::string FnName;
   int DeclType;
   std::vector<std::string> Decls;
+  std::vector<std::unique_ptr<ExprAST>> Vals;
 
 public:
-  DeclStmtAST(std::string FnName, int DeclType, std::vector<std::string> Decls)
-    : FnName(FnName), DeclType(DeclType), Decls(Decls) {}
+  DeclStmtAST(std::string FnName, int DeclType, std::vector<std::string> Decls, std::vector<std::unique_ptr<ExprAST>> Vals)
+    : FnName(FnName), DeclType(DeclType), Decls(Decls), Vals(std::move(Vals)) {}
 
   Value *codegen();
 };
@@ -556,8 +568,15 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
   if (CurTok != tok_identifier)
     return LogErrorS("Expected variable name in declaration");
   std::vector<std::string> DeclNames;
+  std::vector<std::unique_ptr<ExprAST>> Vals;
   DeclNames.push_back(IdentifierStr);
   getNextToken(); // eat <ident>
+  if (CurTok == '=') {
+    getNextToken(); // eat '='
+    Vals.push_back(ParseExpression(0));
+  } else {
+    Vals.push_back(nullptr);
+  }
 
   while (CurTok == ',') {
     getNextToken(); // eat ','
@@ -565,6 +584,12 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
       return LogErrorS("Expected valid variable name in declaration");
     DeclNames.push_back(IdentifierStr);
     getNextToken(); // eat <ident>
+    if (CurTok == '=') {
+      getNextToken(); // eat '='
+      Vals.push_back(ParseExpression(0));
+    } else {
+      Vals.push_back(nullptr);
+    }
   }
 
   if (CurTok != ';') {
@@ -572,7 +597,7 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
   }
   getNextToken(); // eat ';'
 
-  return std::make_unique<DeclStmtAST>(FnName, DeclType, DeclNames);
+  return std::make_unique<DeclStmtAST>(FnName, DeclType, DeclNames, std::move(Vals));
 }
 
 
@@ -685,6 +710,8 @@ static std::unique_ptr<BodyAST> ParseBody(std::string FnName) {
   while (CurTok != tok_return)
   {
     auto S = ParseStatement(FnName);
+    if (S == nullptr)
+      return nullptr;
     Stmts.push_back(std::move(S));
   }
   auto RetStmt = ParseRetStatement();
@@ -951,11 +978,22 @@ Value *DeclStmtAST::codegen() {
   else if (DeclType == type_char)
     ty = Type::getInt32Ty(*TheContext);
 
-  for (auto &Decl : Decls) {
+  int size = Decls.size();
+  for (int i = 0; i < size; i++) {
+    auto Decl = Decls[i];
     // Create an alloca for this variable.
     AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Decl, ty);
     // Add arguments to variable symbol table.
     NamedValues[Decl] = Alloca;
+    // Initialize
+    if (Vals[i] != nullptr) {
+      Value *R = Vals[i]->codegen();
+      if ((DeclType == type_int || DeclType == type_char) && R->getType()->isDoubleTy())
+        R = Builder->CreateFPToUI(R, Type::getInt32Ty(*TheContext), "tmp");
+      if (DeclType == type_double && R->getType()->isIntegerTy())
+        R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
+      Builder->CreateStore(R, Alloca);
+    }
   }
 
   return nullptr;
