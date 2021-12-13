@@ -49,14 +49,24 @@ enum Token {
   tok_identifier = -4,
   tok_number_int = -5,
   tok_number_double = -6,
+  tok_char = -7,
 
   // function
-  tok_return = -7,
+  tok_return = -8,
+  tok_if = -9,
+  tok_else = -10,
+  tok_while = -11,
+  tok_for = -12,
+
+  // user-defined
+  tok_unary_def = -13,
+  tok_binary_def = -14,
 };
 
 enum Types {
   type_int = 1,
-  type_double = 2
+  type_double = 2,
+  type_char = 3,
 };
 
 
@@ -66,10 +76,12 @@ static std::string IdentifierStr;             // Filled in if tok_identifier
 static int NumValI;                           // Filled in if tok_number_int
 static double NumValD;                        // Filled in if tok_number_double
 static int ValType;                           // Filled in if tok_def
+static int CharVal;                           // Filled in if tok_char
 
 static void InitializeTypeValue(){
   TypeValues["int"] = 1;
   TypeValues["double"] = 2;
+  TypeValues["char"] = 3;
 }
 
 /// gettok - Return the next token from standard input.
@@ -94,7 +106,7 @@ static int gettok() {
     }
 
     // int & double
-    if (word == "int" || word == "double") {
+    if (word == "int" || word == "double" || word == "char") {
       ValType = TypeValues[word];
       return tok_def;
     }
@@ -107,13 +119,33 @@ static int gettok() {
     if (word == "return")
       return tok_return;
 
+    // if & else
+    if (word == "if")
+      return tok_if;
+    if (word == "else")
+      return tok_else;
+
+    // while
+    if (word == "while")
+      return tok_while;
+
+    // for
+    if (word == "for")
+      return tok_for;
+
+    // user-defined
+    if (word == "unary")
+      return tok_unary_def;
+    if (word == "binary")
+      return tok_binary_def;
+
     // identifier
     IdentifierStr = word;
     return tok_identifier;
   }
 
 
-  if (isdigit(LastChar)){
+  if (isdigit(LastChar)) {
     int integer = 0;
     double decimal = 0;
     int tok_type = tok_number_int;
@@ -140,6 +172,28 @@ static int gettok() {
     if (tok_type == tok_number_double)
       NumValD = integer + decimal;
     return tok_type;
+  }
+
+  if (LastChar == '\'') {
+    LastChar = fgetc(fip);
+    int character = LastChar;
+    LastChar = fgetc(fip);
+    if (LastChar != '\'')
+      // invalid input
+      return 0;
+    LastChar = fgetc(fip);
+    CharVal = character;
+    return tok_char;
+  }
+
+  if (LastChar == '#') {
+    // Comment util end of line.
+    do
+      LastChar = fgetc(fip);
+    while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
+    
+    if (LastChar != EOF) 
+      return gettok();
   }
 
   // Check for end of file.
@@ -181,6 +235,15 @@ class NumberIntExprAST : public ExprAST {
 
 public:
   NumberIntExprAST(int Val) : Val(Val) {}
+
+  Value *codegen() override;
+};
+
+class CharExprAST : public ExprAST {
+  int Val;
+
+public:
+  CharExprAST(int Val) : Val(Val) {}
 
   Value *codegen() override;
 };
@@ -370,6 +433,14 @@ static std::unique_ptr<ExprAST> ParseNumberExpr(int NumberType) {
 }
 
 
+/// charexpr ::= char
+static std::unique_ptr<ExprAST> ParseCharExpr() {
+  auto Result = std::make_unique<CharExprAST>(CharVal);
+  getNextToken();
+  return Result;
+}
+
+
 /// identifierexpr
 /// <ident> or <callee>
 static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
@@ -415,6 +486,9 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
     break;
   case tok_number_double:
     Result = ParseNumberExpr(type_double);
+    break;
+  case tok_char:
+    Result = ParseCharExpr();
     break;
   case tok_identifier:
     Result = ParseIdentifierExpr();
@@ -673,6 +747,11 @@ Value *NumberIntExprAST::codegen() {
 }
 
 
+Value *CharExprAST::codegen() {
+  return ConstantInt::get(*TheContext, APInt(32,Val));
+}
+
+
 Value *VariableExprAST::codegen() {
   // Look this variable up in the function.
   Value *V = NamedValues[Name];
@@ -768,6 +847,9 @@ Function *PrototypeAST::codegen() {
     case type_double:
       Result = Type::getDoubleTy(*TheContext);
       break;
+    case type_char:
+      Result = Type::getInt32Ty(*TheContext);
+      break;
     default:
       return LogErrorFn("Invalid return value type");
   }
@@ -781,6 +863,9 @@ Function *PrototypeAST::codegen() {
         break;
       case type_double:
         Params.push_back(Type::getDoubleTy(*TheContext));
+        break;
+      case type_char:
+        Params.push_back(Type::getInt32Ty(*TheContext));
         break;
       default:
         return LogErrorFn("Invalid parameter value type");
@@ -818,6 +903,8 @@ Value *DeclStmtAST::codegen() {
     ty = Type::getInt32Ty(*TheContext);
   else if (DeclType == type_double)
     ty = Type::getDoubleTy(*TheContext);
+  else if (DeclType == type_char)
+    ty = Type::getInt32Ty(*TheContext);
 
   for (auto &Decl : Decls) {
     // Create an alloca for this variable.
@@ -883,6 +970,8 @@ Function *FunctionAST::codegen() {
     if (P.getReturnType() == type_double && RetVal->getType()->isIntegerTy())
       RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
     if (P.getReturnType() == type_int && RetVal->getType()->isDoubleTy())
+      RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
+    if (P.getReturnType() == type_char && RetVal->getType()->isDoubleTy())
       RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
     Builder->CreateRet(RetVal);
     // Validate the generated code, checking for consistency.
