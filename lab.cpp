@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -862,7 +863,7 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<Module> TheModule;
 static std::unique_ptr<IRBuilder<>> Builder;
-static std::stack<std::vector<std::string>*> BlockValueNames;
+static std::stack<std::set<std::string>*> BlockValueNames;
 static std::stack<std::map<std::string, AllocaInst*>*> OldNamedValues;
 static std::map<std::string, AllocaInst*> NamedValues;
 static bool HasReturned;
@@ -911,7 +912,7 @@ static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
 /// BlockCodeGen - Code generation for a block. Always needs to modify the stack
 /// in a similar way.
 static void BlockCodeGen(std::unique_ptr<BlockAST> Block) {
-  std::vector<std::string> scopeNames;
+  std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
   BlockValueNames.push(&scopeNames);
   OldNamedValues.push(&scopeValues);
@@ -1130,12 +1131,16 @@ Value *DeclStmtAST::codegen() {
     // Create an alloca for this variable.
     AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Decl, ty);
     if (!BlockValueNames.empty()) {
-      // Record this scope variable into block variable symbol table.
-      BlockValueNames.top()->push_back(Decl);
-      // Restore the existing variable with the same name.
-      AllocaInst *OldValue = NamedValues[Decl];
-      if (OldValue)
-        (*(OldNamedValues.top()))[Decl] = OldValue;
+      std::set<std::string> *scopeNames = BlockValueNames.top();
+      if (scopeNames->find(Decl) == scopeNames->end()) {
+        // Decl not exist in scopeNames
+        // Record this scope variable into block variable symbol table.
+        scopeNames->insert(Decl);
+        // Restore the existing variable with the same name.
+        AllocaInst *OldValue = NamedValues[Decl];
+        if (OldValue)
+          (*(OldNamedValues.top()))[Decl] = OldValue;
+      }
     }
     // Add arguments to variable symbol table.
     NamedValues[Decl] = Alloca;
