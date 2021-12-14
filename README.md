@@ -37,10 +37,10 @@ Our goal is to complete these rules:
 
 <decl>			::= <type><ident>[=<exp>][,<ident>[=<exp>]]*
 <simp>			::= <ident>=<exp>
-<control>		::= if(<exp>)<content>[else<content>]
-					|while(<exp>)<content>
-					|for([<decl>];[<exp>];[<exp>])<content>
-<content>		::= <stmt>|<body>
+<control>		::= if(<exp>)<block>[else<block>]
+					|while(<exp>)<block>
+					|for([<decl>];[<exp>];[<exp>])<block>
+<block>			::= <stmt>|{[<stmt>]*}
 <return>		::= return <exp>
 
 <exp>			::= (<exp>)|<const>|<ident>
@@ -52,7 +52,7 @@ Our goal is to complete these rules:
 <ident>			::= [A-Z_a-z][0-9A-Z_a-z]*
 <const>			::= <intconst>|<doubleconst>|<charconst>
 <unop>			::= <any>
-<binop>			::= +|-|*|<|==|<=|<any>
+<binop>			::= +|-|*|<|==|!=|<=|<any>
 <intconst>		::= [0-9][0-9]*
 <doubleconst>	::=	<intconst>.<intconst>
 <charconst>		::= '<any>'
@@ -65,7 +65,7 @@ Compared to the baseline of Lab5, we add these features:
 2. Support control flow "for".
 3. Support a block instead of a single statement in control flow.
 4. Support assignment in declaration statement, e.g., char a = 'a', b = 'b';.
-5. Support binary operation "==" & "<=".
+5. Support binary operation "==", "!=" & "<=".
 6. Support comment start with "#".
 7. Support user-defined unary & binary operators. (\<def\> above).
 

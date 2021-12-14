@@ -78,7 +78,8 @@ enum Ops {
   op_mul = 3,   // *
   op_lt = 4,    // <
   op_eq = 5,    // ==
-  op_le = 6,    // <=
+  op_ne = 6,    // !=
+  op_le = 7,    // <=
 };
 
 
@@ -104,6 +105,7 @@ static void InitializeOpValue(){
   OpValues["*"] = op_mul;
   OpValues["<"] = op_lt;
   OpValues["=="] = op_eq;
+  OpValues["!="] = op_ne;
   OpValues["<="] = op_le;
 }
 
@@ -222,13 +224,17 @@ static int gettok() {
     OpVal = OpValues[op];
     return tok_op;
   }
-  if (LastChar == '=') {
+  if (LastChar == '=' || LastChar == '!') {
+    std::string op = "";
+    op.push_back(LastChar);
     LastChar = fgetc(fip);
     if (LastChar == '=') {
-      OpVal = OpValues["=="];
+      op.push_back(LastChar);
+      LastChar = fgetc(fip);
+      OpVal = OpValues[op];
       return tok_op;
     } else {
-      return '=';
+      return op[0];
     }
   }
 
@@ -255,7 +261,6 @@ static int gettok() {
 //===----------------------------------------------------------------------===//
 // Abstract Syntax Tree (aka Parse Tree)
 //===----------------------------------------------------------------------===//
-// you don't have to modify this part. (of course it is ok to add something if needed)
 namespace {
 
 /// ExprAST - Base class for all expression nodes.
@@ -340,14 +345,13 @@ public:
 
 /// DeclStmtAST - Statement class for declaration.
 class DeclStmtAST : public StmtAST {
-  std::string FnName;
   int DeclType;
   std::vector<std::string> Decls;
   std::vector<std::unique_ptr<ExprAST>> Vals;
 
 public:
-  DeclStmtAST(std::string FnName, int DeclType, std::vector<std::string> Decls, std::vector<std::unique_ptr<ExprAST>> Vals)
-    : FnName(FnName), DeclType(DeclType), Decls(Decls), Vals(std::move(Vals)) {}
+  DeclStmtAST(int DeclType, std::vector<std::string> Decls, std::vector<std::unique_ptr<ExprAST>> Vals)
+    : DeclType(DeclType), Decls(Decls), Vals(std::move(Vals)) {}
 
   Value *codegen();
 };
@@ -362,6 +366,42 @@ public:
     : Ident(Ident), RHS(std::move(RHS)) {}
 
   Value *codegen();  
+};
+
+/// BlockAST - This class represents the block in control flow.
+class BlockAST {
+  std::vector<std::unique_ptr<StmtAST>> Stmts;
+
+  public:
+  BlockAST(std::vector<std::unique_ptr<StmtAST>> Stmts)
+      : Stmts(std::move(Stmts)) {}
+
+  Value *codegen();  
+};
+
+/// IfStmtAST - Statement class for if control flow.
+class IfStmtAST : public StmtAST {
+  std::unique_ptr<ExprAST> Cond;
+  std::unique_ptr<BlockAST> Then;
+  std::unique_ptr<BlockAST> Else;
+
+public:
+  IfStmtAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<BlockAST> Then, std::unique_ptr<BlockAST> Else)
+    : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
+
+  Value *codegen() override;
+};
+
+/// WhileStmtAST - Statement class for while control flow.
+class WhileStmtAST : public StmtAST {
+  std::unique_ptr<ExprAST> Cond;
+  std::unique_ptr<BlockAST> Block;
+
+public:
+  WhileStmtAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<BlockAST> Block)
+    : Cond(std::move(Cond)), Block(std::move(Block)) {}
+
+  Value *codegen() override;
 };
 
 /// RetStmtAST - Statement class for return statement.
@@ -452,6 +492,11 @@ std::unique_ptr<FunctionAST> LogErrorF(const char *Str) {
   return nullptr;
 }
 
+std::unique_ptr<BlockAST> LogErrorBlock(const char *Str) {
+  LogError(Str);
+  return nullptr;
+}
+
 std::unique_ptr<BodyAST> LogErrorB(const char *Str) {
   LogError(Str);
   return nullptr;
@@ -464,6 +509,7 @@ std::unique_ptr<StmtAST> LogErrorS(const char *Str) {
 
 
 static std::unique_ptr<ExprAST> ParseExpression(int precedence);
+static std::unique_ptr<StmtAST> ParseStatement();
 
 
 /// numberexpr ::= number
@@ -561,7 +607,7 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
 
 /// declaration statement
 /// <decl>
-static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
+static std::unique_ptr<StmtAST> ParseDeclStatement() {
   int DeclType = ValType;
   
   std::vector<std::string> DeclNames;
@@ -586,7 +632,7 @@ static std::unique_ptr<StmtAST> ParseDeclStatement(std::string FnName) {
   }
   getNextToken(); // eat ';'
 
-  return std::make_unique<DeclStmtAST>(FnName, DeclType, DeclNames, std::move(Vals));
+  return std::make_unique<DeclStmtAST>(DeclType, DeclNames, std::move(Vals));
 }
 
 
@@ -612,6 +658,77 @@ static std::unique_ptr<StmtAST> ParseSimpStatement() {
 }
 
 
+/// block
+/// <block>
+static std::unique_ptr<BlockAST> ParseBlock() {
+  std::vector<std::unique_ptr<StmtAST>> Stmts;
+  if (CurTok != '{') {
+    auto S = ParseStatement();
+    Stmts.push_back(std::move(S));
+  } else {
+    getNextToken(); // eat '{'
+    while (CurTok != '}')
+    {
+      auto S = ParseStatement();
+      if (S == nullptr)
+        return nullptr;
+      Stmts.push_back(std::move(S));
+    }
+    getNextToken(); // eat '}'
+  }
+  return std::make_unique<BlockAST>(std::move(Stmts));
+}
+
+
+/// if statement
+static std::unique_ptr<StmtAST> ParseIfStatement() {
+  getNextToken(); // eat "if"
+
+  if (CurTok != '(') {
+    return LogErrorS("Expected '(' in if statement");
+  }
+  getNextToken(); // eat '('
+
+  auto Cond = ParseExpression(0);
+
+  if (CurTok != ')') {
+    return LogErrorS("Expected ')' in if statement");
+  }
+  getNextToken(); // eat ')'
+
+  auto Then = ParseBlock();
+
+  std::unique_ptr<BlockAST> Else = nullptr;
+  if (CurTok == tok_else) {
+    getNextToken(); // eat "else"
+    Else = ParseBlock();
+  }
+
+  return std::make_unique<IfStmtAST>(std::move(Cond), std::move(Then), std::move(Else));
+}
+
+
+/// while statement
+static std::unique_ptr<StmtAST> ParseWhileStatement() {
+  getNextToken(); // eat "while"
+
+  if (CurTok != '(') {
+    return LogErrorS("Expected '(' in if statement");
+  }
+  getNextToken(); // eat '('
+
+  auto Cond = ParseExpression(0);
+
+  if (CurTok != ')') {
+    return LogErrorS("Expected ')' in if statement");
+  }
+  getNextToken(); // eat ')'
+
+  auto Block = ParseBlock();
+
+  return std::make_unique<WhileStmtAST>(std::move(Cond), std::move(Block));
+}
+
 /// return statement
 /// <return>
 static std::unique_ptr<StmtAST> ParseRetStatement() {
@@ -630,15 +747,19 @@ static std::unique_ptr<StmtAST> ParseRetStatement() {
 
 /// statement 
 /// <stmt>
-static std::unique_ptr<StmtAST> ParseStatement(std::string FnName) {
+static std::unique_ptr<StmtAST> ParseStatement() {
   switch (CurTok)
   {
   case tok_def:
-    return ParseDeclStatement(FnName);
+    return ParseDeclStatement();
   case tok_identifier:
     return ParseSimpStatement();
   case tok_return:
     return ParseRetStatement();
+  case tok_if:
+    return ParseIfStatement();
+  case tok_while:
+    return ParseWhileStatement();
   default:
     return LogErrorS("Invalid statement input");
   }
@@ -694,17 +815,19 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
 
 /// body
 /// <body>
-static std::unique_ptr<BodyAST> ParseBody(std::string FnName) {
+static std::unique_ptr<BodyAST> ParseBody() {
+  if (CurTok != '{')
+    return LogErrorB("Expected '{' in function body");
+  getNextToken(); // eat '{'
   std::vector<std::unique_ptr<StmtAST>> Stmts;
-  while (CurTok != tok_return)
+  while (CurTok != '}')
   {
-    auto S = ParseStatement(FnName);
+    auto S = ParseStatement();
     if (S == nullptr)
       return nullptr;
     Stmts.push_back(std::move(S));
   }
-  auto RetStmt = ParseRetStatement();
-  Stmts.push_back(std::move(RetStmt));
+  getNextToken(); // eat '}'
   return std::make_unique<BodyAST>(std::move(Stmts));
 }
 
@@ -713,13 +836,7 @@ static std::unique_ptr<BodyAST> ParseBody(std::string FnName) {
 /// <function>
 static std::unique_ptr<FunctionAST> ParseDefinition() {
   auto Proto = ParsePrototype();
-  if (CurTok != '{')
-    return LogErrorF("Expected '{' in function body");
-  getNextToken(); // eat '{'
-  auto Body = ParseBody(Proto->getName());
-  if (CurTok != '}')
-    return LogErrorF("Expected '}' in function body");
-  getNextToken(); // eat '}'
+  auto Body = ParseBody();
   return std::make_unique<FunctionAST>(std::move(Proto), std::move(Body));
 }
 
@@ -745,7 +862,10 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<Module> TheModule;
 static std::unique_ptr<IRBuilder<>> Builder;
+static std::stack<std::vector<std::string>*> BlockValueNames;
+static std::stack<std::map<std::string, AllocaInst*>*> OldNamedValues;
 static std::map<std::string, AllocaInst*> NamedValues;
+static bool HasReturned;
 static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
 
@@ -785,6 +905,28 @@ static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
   IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
                   TheFunction->getEntryBlock().begin());
   return TmpB.CreateAlloca(ty, nullptr, VarName.c_str());
+}
+
+
+/// BlockCodeGen - Code generation for a block. Always needs to modify the stack
+/// in a similar way.
+static void BlockCodeGen(std::unique_ptr<BlockAST> Block) {
+  std::vector<std::string> scopeNames;
+  std::map<std::string, AllocaInst*> scopeValues;
+  BlockValueNames.push(&scopeNames);
+  OldNamedValues.push(&scopeValues);
+
+  Value *BlockV = Block->codegen();
+
+  for (auto name : scopeNames) {
+    AllocaInst *val = scopeValues[name];
+    if (val) 
+      NamedValues[name] = val;
+    else 
+      NamedValues.erase(name);
+  }
+  BlockValueNames.pop();
+  OldNamedValues.pop();
 }
 
 
@@ -868,6 +1010,11 @@ Value *BinaryExprAST::codegen() {
         return Builder->CreateUIToFP(Builder->CreateICmpEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpUEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+    case op_ne:
+      if (isIntOp)
+        return Builder->CreateUIToFP(Builder->CreateICmpNE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
+      else
+        return Builder->CreateUIToFP(Builder->CreateFCmpUNE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     case op_le:
       if (isIntOp)
         return Builder->CreateUIToFP(Builder->CreateICmpULE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
@@ -957,8 +1104,6 @@ Value *BodyAST::codegen() {
 
 
 Value *DeclStmtAST::codegen() {
-  Function *TheFunction = getFunction(FnName);
-
   llvm::Type *ty;
   if (DeclType == type_int)
     ty = Type::getInt32Ty(*TheContext);
@@ -969,23 +1114,38 @@ Value *DeclStmtAST::codegen() {
 
   int size = Decls.size();
   for (int i = 0; i < size; i++) {
-    auto Decl = Decls[i];
-    // Create an alloca for this variable.
-    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Decl, ty);
-    // Add arguments to variable symbol table.
-    NamedValues[Decl] = Alloca;
-    // Initialize
+    // Compute R first.
+    Value *R;
     if (Vals[i] != nullptr) {
-      Value *R = Vals[i]->codegen();
+      R = Vals[i]->codegen();
       if ((DeclType == type_int || DeclType == type_char) && R->getType()->isDoubleTy())
         R = Builder->CreateFPToUI(R, Type::getInt32Ty(*TheContext), "tmp");
       if (DeclType == type_double && R->getType()->isIntegerTy())
         R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
-      Builder->CreateStore(R, Alloca);
     }
+
+    auto Decl = Decls[i];
+    // Get the current function.
+    Function *TheFunction = Builder->GetInsertBlock()->getParent();
+    // Create an alloca for this variable.
+    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Decl, ty);
+    if (!BlockValueNames.empty()) {
+      // Record this scope variable into block variable symbol table.
+      BlockValueNames.top()->push_back(Decl);
+      // Restore the existing variable with the same name.
+      AllocaInst *OldValue = NamedValues[Decl];
+      if (OldValue)
+        (*(OldNamedValues.top()))[Decl] = OldValue;
+    }
+    // Add arguments to variable symbol table.
+    NamedValues[Decl] = Alloca;
+
+    // Initialize
+    if (Vals[i] != nullptr)
+      Builder->CreateStore(R, Alloca);
   }
 
-  return nullptr;
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
 
@@ -1006,12 +1166,98 @@ Value *SimpStmtAST::codegen() {
     R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
 
   Builder->CreateStore(R, Variable);
-  return nullptr;
+
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
+}
+
+
+Value *BlockAST::codegen() {
+  Value *Result;
+  for (auto &S : Stmts) {
+    Result = S->codegen();
+  }
+  return Result;
+}
+
+
+Value *IfStmtAST::codegen() {
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+
+  Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+  // Create blocks for the then and else cases. Insert the 'then' block at the
+  // end of the function.
+  BasicBlock *ThenBB = BasicBlock::Create(*TheContext, "then", TheFunction);
+  BasicBlock *ElseBB = BasicBlock::Create(*TheContext, "else");
+  BasicBlock *MergeBB = BasicBlock::Create(*TheContext, "ifcont");
+
+  Builder->CreateCondBr(CondV, ThenBB, ElseBB);
+
+  // Emit then block.
+  Builder->SetInsertPoint(ThenBB);
+
+  BlockCodeGen(std::move(Then));
+
+  Builder->CreateBr(MergeBB);
+  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+  ThenBB = Builder->GetInsertBlock();
+
+  // Emit else block.
+  TheFunction->getBasicBlockList().push_back(ElseBB);
+  Builder->SetInsertPoint(ElseBB);
+  
+  if (Else) {
+    BlockCodeGen(std::move(Else));
+  }
+
+  Builder->CreateBr(MergeBB);
+  // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
+  ElseBB = Builder->GetInsertBlock();
+
+  // Emit merge block.
+  TheFunction->getBasicBlockList().push_back(MergeBB);
+  Builder->SetInsertPoint(MergeBB);
+
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
+}
+
+
+Value *WhileStmtAST::codegen() {
+  // TODO
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
 
 Value *RetStmtAST::codegen() {
-  return Ret->codegen();
+  Function *TheFunction = Builder->GetInsertBlock()->getParent();
+  Type *rTy = TheFunction->getReturnType();
+  int FnType;
+  if (rTy->isIntegerTy())
+    FnType = type_int;
+  else if (rTy->isDoubleTy()) 
+    FnType = type_double;
+  else 
+    return LogErrorV("Unexpected function return type");
+
+  Value *RetVal = Ret->codegen();
+  Type *vTy = RetVal->getType();
+  if (FnType == type_double && vTy->isIntegerTy())
+    RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
+  if (FnType == type_int && vTy->isDoubleTy())
+    RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
+
+  Builder->CreateRet(RetVal);
+  if (BlockValueNames.empty())
+    HasReturned = true;
+
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
 
@@ -1029,6 +1275,7 @@ Function *FunctionAST::codegen() {
   Builder->SetInsertPoint(BB);
 
   NamedValues.clear();
+  HasReturned = false;
   for (auto &Arg : TheFunction->args()) {
     AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, std::string(Arg.getName()), Arg.getType());
     Builder->CreateStore(&Arg, Alloca);
@@ -1039,13 +1286,15 @@ Function *FunctionAST::codegen() {
     //****************
     // Correctly create the RetVal use Builder.
     //****************
-    if (P.getReturnType() == type_double && RetVal->getType()->isIntegerTy())
-      RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
-    if (P.getReturnType() == type_int && RetVal->getType()->isDoubleTy())
-      RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
-    if (P.getReturnType() == type_char && RetVal->getType()->isDoubleTy())
-      RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
-    Builder->CreateRet(RetVal);
+    if (!HasReturned) {
+      if (P.getReturnType() == type_double && RetVal->getType()->isIntegerTy())
+        RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
+      if (P.getReturnType() == type_int && RetVal->getType()->isDoubleTy())
+        RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
+      if (P.getReturnType() == type_char && RetVal->getType()->isDoubleTy())
+        RetVal = Builder->CreateFPToUI(RetVal, Type::getInt32Ty(*TheContext), "tmp");
+      Builder->CreateRet(RetVal);
+    }
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
     return TheFunction;
@@ -1138,6 +1387,7 @@ int main(int argc, char* argv[]) {
   InitializeOpValue();
 
   BinopPrecedence[op_eq] = 10;
+  BinopPrecedence[op_ne] = 10;
   BinopPrecedence[op_le] = 10;
   BinopPrecedence[op_lt] = 10;
   BinopPrecedence[op_add] = 20;
