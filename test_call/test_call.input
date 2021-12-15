@@ -1,0 +1,11 @@
+int foo(char a, double b) {
+    int c = a * b, d = 2, e;
+    e = 1;
+    return c * d + e;
+}
+
+double bar(int a, char b) {
+    double c = a + b;
+    int d = b;
+    return foo(c, d);
+}

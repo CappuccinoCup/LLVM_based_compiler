@@ -1,0 +1,20 @@
+int foo(char a, double b) {
+    int res = 0;
+    while (a < 'c') {
+        if (a != 'a')
+            res = res + b;
+        else
+            res = res + 100 * b;
+        a = a + 1;
+    }
+    return res;
+}
+
+double bar(int a, char b) {
+    int res = 0;
+    for (int i = 0, j = a; i + j < 100; i = i + 2) {
+        res = res + j;
+        j = j + 2;
+    }
+    return res;
+}

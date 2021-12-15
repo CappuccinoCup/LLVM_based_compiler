@@ -1,0 +1,39 @@
+int foo(char a, double b) {
+    if (a != 'b') {
+        int res = a - b;
+        if (res < 96) {
+            int res = res - b;
+            if (res < 96) {
+                int c = res;
+                int a = b;
+                int b = a + 1;
+                int res = a + b;
+                if (res == 7) {
+                    return 233;
+                }
+                return c;
+            }
+        }       
+    }
+    int res = b * 2;
+    return b;
+}
+
+double bar(int a, char b) {
+    char a = b;
+    if (b == 'a') {
+        double a = 1;
+        char a = 2;
+        if (a == 2) {
+            int a = 3;
+            if (a == 3) {
+                char a = 4;
+            }
+            return a;
+        }
+        double a = 5;
+        return a;
+    }
+    char b = a;
+    return b;
+}

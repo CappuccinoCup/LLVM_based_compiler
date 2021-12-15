@@ -1,0 +1,6 @@
+foo of ('a', 1.1) is :213
+foo of ('b', 2.2) is :431
+foo of ('c', 3.3) is :653
+bar of (1, 'a') is :19013
+bar of (2, 'b') is :19601
+bar of (3, 'c') is :20197
