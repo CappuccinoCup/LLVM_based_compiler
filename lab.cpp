@@ -396,11 +396,11 @@ public:
 /// WhileStmtAST - Statement class for while control flow.
 class WhileStmtAST : public StmtAST {
   std::unique_ptr<ExprAST> Cond;
-  std::unique_ptr<BlockAST> Block;
+  std::unique_ptr<BlockAST> Loop;
 
 public:
-  WhileStmtAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<BlockAST> Block)
-    : Cond(std::move(Cond)), Block(std::move(Block)) {}
+  WhileStmtAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<BlockAST> Loop)
+    : Cond(std::move(Cond)), Loop(std::move(Loop)) {}
 
   Value *codegen() override;
 };
@@ -410,12 +410,12 @@ class ForStmtAST : public StmtAST {
   std::unique_ptr<StmtAST> Decl;
   std::unique_ptr<ExprAST> Cond;
   std::unique_ptr<StmtAST> Simp;
-  std::unique_ptr<BlockAST> Block;
+  std::unique_ptr<BlockAST> Loop;
 
 public:
   ForStmtAST(std::unique_ptr<StmtAST> Decl, std::unique_ptr<ExprAST> Cond, 
-  std::unique_ptr<StmtAST> Simp, std::unique_ptr<BlockAST> Block)
-    : Decl(std::move(Decl)), Cond(std::move(Cond)), Simp(std::move(Simp)), Block(std::move(Block)) {}
+  std::unique_ptr<StmtAST> Simp, std::unique_ptr<BlockAST> Loop)
+    : Decl(std::move(Decl)), Cond(std::move(Cond)), Simp(std::move(Simp)), Loop(std::move(Loop)) {}
 
   Value *codegen() override;
 };
@@ -730,9 +730,9 @@ static std::unique_ptr<StmtAST> ParseWhileStatement() {
   }
   getNextToken(); // eat ')'
 
-  auto Block = ParseBlock();
+  auto Loop = ParseBlock();
 
-  return std::make_unique<WhileStmtAST>(std::move(Cond), std::move(Block));
+  return std::make_unique<WhileStmtAST>(std::move(Cond), std::move(Loop));
 }
 
 
@@ -768,9 +768,9 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
   }
   getNextToken(); // eat ')'
 
-  auto Block = ParseBlock();
+  auto Loop = ParseBlock();
 
-  return std::make_unique<ForStmtAST>(std::move(Decl), std::move(Cond), std::move(Simp), std::move(Block));
+  return std::make_unique<ForStmtAST>(std::move(Decl), std::move(Cond), std::move(Simp), std::move(Loop));
 }
 
 
@@ -970,18 +970,15 @@ static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
 }
 
 
-/// BlockCodeGen - Code generation for a block. Always needs to modify the stack
-/// in a similar way.
-static void BlockCodeGen(std::unique_ptr<BlockAST> Block) {
-  std::set<std::string> scopeNames;
-  std::map<std::string, AllocaInst*> scopeValues;
-  BlockValueNames.push(&scopeNames);
-  OldNamedValues.push(&scopeValues);
-
-  Value *BlockV = Block->codegen();
-
-  for (auto name : scopeNames) {
-    AllocaInst *val = scopeValues[name];
+/// EnterBlock - Enter a block.
+static void EnterBlock(std::set<std::string> *scopeNames, std::map<std::string, AllocaInst*> *scopeValues) {
+  BlockValueNames.push(scopeNames);
+  OldNamedValues.push(scopeValues);
+}
+/// LeaveBlock - Leave a block.
+static void LeaveBlock(std::set<std::string> *scopeNames, std::map<std::string, AllocaInst*> *scopeValues) {
+  for (auto name : *scopeNames) {
+    AllocaInst *val = (*scopeValues)[name];
     if (val) 
       NamedValues[name] = val;
     else 
@@ -1247,48 +1244,49 @@ Value *BlockAST::codegen() {
 
 
 Value *IfStmtAST::codegen() {
-  Value *CondV = Cond->codegen();
-  if (!CondV)
-    return nullptr;
-  
-  if (CondV->getType()->isIntegerTy())
-    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
-  // Convert condition to a bool by comparing non-equal to 0.0.
-  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
-
   Function *TheFunction = Builder->GetInsertBlock()->getParent();
 
   // Create blocks for the then and else cases. Insert the 'then' block at the
   // end of the function.
   BasicBlock *ThenBB = BasicBlock::Create(*TheContext, "then", TheFunction);
-  BasicBlock *ElseBB = BasicBlock::Create(*TheContext, "else");
-  BasicBlock *MergeBB = BasicBlock::Create(*TheContext, "ifcont");
+  BasicBlock *ElseBB = BasicBlock::Create(*TheContext, "else", TheFunction);
+  BasicBlock *MergeBB = BasicBlock::Create(*TheContext, "ifcont", TheFunction);
 
+  // Compute the value of he condition statement.
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
   Builder->CreateCondBr(CondV, ThenBB, ElseBB);
 
   // Emit then block.
   Builder->SetInsertPoint(ThenBB);
 
-  BlockCodeGen(std::move(Then));
+  std::set<std::string> scopeNames;
+  std::map<std::string, AllocaInst*> scopeValues;
+  EnterBlock(&scopeNames, &scopeValues);
+  Then->codegen();
+  LeaveBlock(&scopeNames, &scopeValues);
 
   Builder->CreateBr(MergeBB);
-  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
-  ThenBB = Builder->GetInsertBlock();
 
   // Emit else block.
-  TheFunction->getBasicBlockList().push_back(ElseBB);
   Builder->SetInsertPoint(ElseBB);
   
   if (Else) {
-    BlockCodeGen(std::move(Else));
+    std::set<std::string> scopeNames;
+    std::map<std::string, AllocaInst*> scopeValues;
+    EnterBlock(&scopeNames, &scopeValues);
+    Else->codegen();
+    LeaveBlock(&scopeNames, &scopeValues);
   }
 
   Builder->CreateBr(MergeBB);
-  // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
-  ElseBB = Builder->GetInsertBlock();
 
   // Emit merge block.
-  TheFunction->getBasicBlockList().push_back(MergeBB);
   Builder->SetInsertPoint(MergeBB);
 
   return Constant::getNullValue(Type::getDoubleTy(*TheContext));
@@ -1296,13 +1294,89 @@ Value *IfStmtAST::codegen() {
 
 
 Value *WhileStmtAST::codegen() {
-  // TODO
+  Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+  BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
+  BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "after", TheFunction);
+
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  Builder->SetInsertPoint(LoopBB);
+
+  std::set<std::string> scopeNames;
+  std::map<std::string, AllocaInst*> scopeValues;
+  EnterBlock(&scopeNames, &scopeValues);
+  Loop->codegen();
+  LeaveBlock(&scopeNames, &scopeValues);
+
+  CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  Builder->SetInsertPoint(AfterBB);
+
   return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
 
 Value *ForStmtAST::codegen() {
-  // TODO
+  Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+  BasicBlock *InitBB = BasicBlock::Create(*TheContext, "init", TheFunction);
+  BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
+  BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "after", TheFunction);
+
+  Builder->CreateBr(InitBB);
+
+  Builder->SetInsertPoint(InitBB);
+
+  // scope start
+  std::set<std::string> scopeNames;
+  std::map<std::string, AllocaInst*> scopeValues;
+  EnterBlock(&scopeNames, &scopeValues);
+  
+  // declaration statement
+  Decl->codegen();
+
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  Builder->SetInsertPoint(LoopBB);
+
+  // loop body
+  Loop->codegen();
+
+  // simple statement
+  Simp->codegen();
+
+  CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  if (CondV->getType()->isIntegerTy())
+    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
+  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  // scope end
+  LeaveBlock(&scopeNames, &scopeValues);
+
+  Builder->SetInsertPoint(AfterBB);
+
   return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
 
