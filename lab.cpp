@@ -92,7 +92,7 @@ static int NumValI;                           // Filled in if tok_number_int
 static double NumValD;                        // Filled in if tok_number_double
 static int ValType;                           // Filled in if tok_def
 static int CharVal;                           // Filled in if tok_char
-static int OpVal;                             // Filled in if tok_op
+static std::string OpVal;                     // Filled in if tok_op
 
 static void InitializeTypeValue(){
   TypeValues["int"] = type_int;
@@ -222,7 +222,7 @@ static int gettok() {
       op.push_back(LastChar);
       LastChar = fgetc(fip);
     }
-    OpVal = OpValues[op];
+    OpVal = op;
     return tok_op;
   }
   if (LastChar == '=' || LastChar == '!') {
@@ -232,7 +232,7 @@ static int gettok() {
     if (LastChar == '=') {
       op.push_back(LastChar);
       LastChar = fgetc(fip);
-      OpVal = OpValues[op];
+      OpVal = op;
       return tok_op;
     } else {
       return op[0];
@@ -310,13 +310,25 @@ public:
   Value *codegen() override;
 };
 
+/// UnaryExprAST - Expression class for a unary operator.
+class UnaryExprAST : public ExprAST {
+  std::string Op;
+  std::unique_ptr<ExprAST> RHS;
+
+public:
+  UnaryExprAST(std::string Op, std::unique_ptr<ExprAST> RHS)
+    : Op(Op), RHS(std::move(RHS)) {}
+
+  Value *codegen() override;
+};
+
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
-  int Op;
+  std::string Op;
   std::unique_ptr<ExprAST> LHS, RHS;
 
 public:
-  BinaryExprAST(int Op, std::unique_ptr<ExprAST> LHS,
+  BinaryExprAST(std::string Op, std::unique_ptr<ExprAST> LHS,
                 std::unique_ptr<ExprAST> RHS)
       : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
 
@@ -486,9 +498,19 @@ public:
 static int CurTok;
 static int getNextToken() { return CurTok = gettok(); }
 
+
 /// BinopPrecedence - This holds the precedence for each binary operator that is
 /// defined.
 static std::map<int, int> BinopPrecedence;
+
+/// DefUnopProto - This holds the name for each user-defined unary operator.
+static std::set<char> DefUnopNames;
+
+/// DefBinopProto - This holds the prototype for each user-defined binary operator.
+static std::set<char> DefBinopNames;
+
+/// DefOpPrecedence - This holds the precedence for each user-defined operator.
+static std::map<char, int> DefOpPrecedence;
 
 
 /// LogError* - These are little helper functions for error handling.
@@ -526,6 +548,32 @@ std::unique_ptr<StmtAST> LogErrorS(const char *Str) {
 
 static std::unique_ptr<ExprAST> ParseExpression(int precedence);
 static std::unique_ptr<StmtAST> ParseStatement();
+
+
+static bool isUnop(int tok) {
+  return DefUnopNames.find(tok) != DefUnopNames.end();
+}
+
+static bool isBinop(int tok) {
+  return (tok == tok_op) || (DefBinopNames.find(tok) != DefBinopNames.end());
+}
+
+static std::string getBinop(int tok) {
+  if (tok == tok_op)
+    return OpVal;
+  if (DefBinopNames.find(tok) != DefBinopNames.end()) {
+    std::string Op = "";
+    Op.push_back(tok);
+    return Op;
+  }
+  return "";
+}
+
+static int getOpPrecedence(int tok) {
+  if (tok == tok_op)
+    return BinopPrecedence[OpValues[OpVal]];
+  return DefOpPrecedence[tok];
+}
 
 
 /// numberexpr ::= number
@@ -577,6 +625,19 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 }
 
 
+/// unarypexpr
+/// <unop><exp>
+static std::unique_ptr<ExprAST> ParseUnaryExpr() {
+  std::string Op = "";
+  Op.push_back(CurTok);
+  getNextToken(); // eat <unop>
+
+  auto E = ParseExpression(0);
+
+  return std::make_unique<UnaryExprAST>(Op, std::move(E));
+}
+
+
 /// expression
 /// <exp>
 static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
@@ -603,13 +664,16 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
     Result = ParseIdentifierExpr();
     break;
   default:
-    return LogError("Invalid expression input");
+    if (!isUnop(CurTok)) {
+      return LogError("Invalid expression input");
+    }
+    Result = ParseUnaryExpr();
     break;
   }
 
-  while (CurTok == tok_op) {
-    int op = OpVal;
-    int rp = BinopPrecedence[OpVal];
+  while (isBinop(CurTok)) {
+    std::string op = getBinop(CurTok);
+    int rp = getOpPrecedence(CurTok);
     int lp = rp - 1;
     if (lp < precedence)
       break;
@@ -755,7 +819,6 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
   auto Cond = ParseExpression(0);
 
   if (CurTok != ';') {
-    std::cout << CurTok << std::endl;
     return LogErrorS("Expected ';' in for statement");
   }
   getNextToken(); // eat ';'
@@ -763,7 +826,6 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
   auto Simp = ParseSimpStatement();
 
   if (CurTok != ')') {
-    std::cout << CurTok << std::endl;
     return LogErrorS("Expected ')' in for statement");
   }
   getNextToken(); // eat ')'
@@ -903,6 +965,133 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
 }
 
 
+/// binary
+/// <def>
+static std::unique_ptr<FunctionAST> ParseBinopDef() {
+  getNextToken(); // eat "binary"
+
+  std::string FnName = "";
+  FnName.push_back(CurTok);
+  getNextToken(); // eat <any>
+
+  if (CurTok != tok_number_int) {
+    return LogErrorF("Expected precedence in binary operator definition");
+  }
+  int Pre = NumValI;
+  getNextToken(); // eat <intconst>
+
+  if (CurTok != tok_def) {
+    return LogErrorF("Expected type in binary operator definition");
+  }
+  int FnType = ValType;
+  getNextToken(); // eat <type>
+
+  if (CurTok != '(') {
+    return LogErrorF("Expected '(' in binary operator definition");
+  }
+  getNextToken(); // eat '('
+
+  std::vector<int> ArgTypes;
+  std::vector<std::string> ArgNames;
+
+  if (CurTok != tok_def) {
+    return LogErrorF("Invalid argument type in binary operator definition");
+  }
+  ArgTypes.push_back(ValType);
+  getNextToken(); // eat <type>
+
+  if (CurTok != tok_identifier) {
+    return LogErrorF("Expected argument name in binary operator definition");
+  }
+  ArgNames.push_back(IdentifierStr);
+  getNextToken(); // eat <ident>
+
+  if (CurTok != ',') {
+    return LogErrorF("Lack of arguments in binary operator definition");
+  }
+  getNextToken(); // eat ','
+
+  if (CurTok != tok_def) {
+    return LogErrorF("Invalid argument type in binary operator definition");
+  }
+  ArgTypes.push_back(ValType);
+  getNextToken(); // eat <type>
+
+  if (CurTok != tok_identifier) {
+    return LogErrorF("Expected argument name in binary operator definition");
+  }
+  ArgNames.push_back(IdentifierStr);
+  getNextToken(); // eat <ident>
+
+  if (CurTok != ')') {
+    return LogErrorF("Expected ')' in binary operator definition");
+  }
+  getNextToken(); // eat ')'
+
+  DefBinopNames.insert(FnName[0]);
+  DefOpPrecedence[FnName[0]] = Pre;
+
+  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+  auto Body = ParseBody();
+  return std::make_unique<FunctionAST>(std::move(Proto), std::move(Body));
+}
+
+
+/// unary
+/// <def>
+static std::unique_ptr<FunctionAST> ParseUnopDef() {
+  getNextToken(); // eat "unary"
+
+  std::string FnName = "";
+  FnName.push_back(CurTok);
+  getNextToken(); // eat <any>
+
+  if (CurTok != tok_number_int) {
+    return LogErrorF("Expected precedence in unary operator definition");
+  }
+  int Pre = NumValI;
+  getNextToken(); // eat <intconst>
+
+  if (CurTok != tok_def) {
+    return LogErrorF("Expected type in unary operator definition");
+  }
+  int FnType = ValType;
+  getNextToken(); // eat <type>
+
+  if (CurTok != '(') {
+    return LogErrorF("Expected '(' in unary operator definition");
+  }
+  getNextToken(); // eat '('
+
+  std::vector<int> ArgTypes;
+  std::vector<std::string> ArgNames;
+
+  if (CurTok != tok_def) {
+    return LogErrorF("Invalid argument type in unary operator definition");
+  }
+  ArgTypes.push_back(ValType);
+  getNextToken(); // eat <type>
+
+  if (CurTok != tok_identifier) {
+    return LogErrorF("Expected argument name in unary operator definition");
+  }
+  ArgNames.push_back(IdentifierStr);
+  getNextToken(); // eat <ident>
+
+  if (CurTok != ')') {
+    return LogErrorF("Expected ')' in unary operator definition");
+  }
+  getNextToken(); // eat ')'
+
+  DefUnopNames.insert(FnName[0]);
+  DefOpPrecedence[FnName[0]] = Pre;
+
+  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+  auto Body = ParseBody();
+  return std::make_unique<FunctionAST>(std::move(Proto), std::move(Body));
+}
+
+
 /// external ::= 'extern' prototype
 /// <gdecl>
 static std::unique_ptr<PrototypeAST> ParseExtern() {
@@ -956,6 +1145,35 @@ Function *getFunction(std::string Name) {
 
   // If no existing prototype exists, return null.
   return nullptr;
+}
+
+
+/// TypeMerge - Merge two type with the following rules:
+/// int ~ int -> int          int ~ double -> double
+/// double ~ int -> double    double ~ double -> double
+static bool TypeMerge(Value* &L, Value* &R) {
+  bool isIntOp;
+  if (L->getType()->isDoubleTy()) {
+    if (R->getType()->isIntegerTy()) 
+      R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
+    isIntOp = false;
+  } else {
+    if (R->getType()->isDoubleTy()) {
+      L = Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext), "tmp");
+      isIntOp = false;
+    } else if (R->getType()->isIntegerTy())
+      isIntOp = true;
+  }
+  return isIntOp;
+}
+
+/// TypeCast - Cast the type of R to the type T.
+/// Assume that Value can only be IntegerTy or DoubleTy.
+static void TypeCast(Type *T, Value* &R) {
+  if (T->isIntegerTy() && R->getType()->isDoubleTy())
+    R = Builder->CreateFPToUI(R, Type::getInt32Ty(*TheContext), "tmp");
+  if (T->isDoubleTy() && R->getType()->isIntegerTy())
+    R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
 }
 
 
@@ -1014,6 +1232,28 @@ Value *VariableExprAST::codegen() {
 }
 
 
+Value *UnaryExprAST::codegen() {
+  Value *R = RHS->codegen();
+  if (!R)
+    return nullptr;
+  
+  Function *CalleeF = TheModule->getFunction(Op);
+  if (!CalleeF)
+    return LogErrorV("Unknown unary operation");
+
+  if (CalleeF->arg_size() != 1)
+    return LogErrorV("Arguments size for unary operation must be 1");
+
+  std::vector<Value *> ArgValues;
+
+  Type *T = CalleeF->getArg(0)->getType();
+  TypeCast(T, R);
+  ArgValues.push_back(R);
+
+  return Builder->CreateCall(CalleeF, ArgValues, "calltmp");
+}
+
+
 Value *BinaryExprAST::codegen() {
   Value *L = LHS->codegen();
   if (!L)
@@ -1022,65 +1262,62 @@ Value *BinaryExprAST::codegen() {
   if (!R)
     return nullptr;
 
-  // Do value type conversion before binary operation.
-  bool isIntOp;
-  if (L->getType()->isDoubleTy()) {
-    if (R->getType()->isIntegerTy()) 
-      R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
-    else if (!R->getType()->isDoubleTy())
-      return LogErrorV("Invalid operation value type");
-    isIntOp = false;
-  } else if (L->getType()->isIntegerTy()) {
-    if (R->getType()->isDoubleTy()) {
-      L = Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext), "tmp");
-      isIntOp = false;
-    } else if (R->getType()->isIntegerTy())
-      isIntOp = true;
-    else
-      return LogErrorV("Invalid operation value type");
-  } else {
-    return LogErrorV("Invalid operation value type");
-  }
-
-  switch (Op) {
+  switch (OpValues[Op]) {
     case op_add:
-      if (isIntOp) 
+      if (TypeMerge(L, R)) 
         return Builder->CreateAdd(L, R, "addtmp");
       else
         return Builder->CreateFAdd(L, R, "addtmp");
     case op_sub:
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateSub(L, R, "subtmp");
       else
         return Builder->CreateFSub(L, R, "subtmp");
     case op_mul:
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateMul(L, R, "multmp");
       else
         return Builder->CreateFMul(L, R, "multmp");
     case op_lt:
       // Lack of bool type (i1), so use "double" type as cmp return type...
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateUIToFP(Builder->CreateICmpULT(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpULT(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     case op_eq:
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateUIToFP(Builder->CreateICmpEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpUEQ(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     case op_ne:
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateUIToFP(Builder->CreateICmpNE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpUNE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     case op_le:
-      if (isIntOp)
+      if (TypeMerge(L, R))
         return Builder->CreateUIToFP(Builder->CreateICmpULE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
       else
         return Builder->CreateUIToFP(Builder->CreateFCmpULE(L, R, "cmptmp"), Type::getDoubleTy(*TheContext), "booltmp");
     default:
-      return LogErrorV("Unknown binary opreation");
+      Function *CalleeF = TheModule->getFunction(Op);
+      if (!CalleeF)
+        return LogErrorV("Unknown binary opreation");
+
+      if (CalleeF->arg_size() != 2)
+        return LogErrorV("Arguments size for binary operation must be 2");
+
+      std::vector<Value *> ArgValues;
+
+      Type *FT = CalleeF->getArg(0)->getType();
+      TypeCast(FT, L);
+      ArgValues.push_back(L);
+
+      Type *ST = CalleeF->getArg(1)->getType();
+      TypeCast(ST, R);
+      ArgValues.push_back(R);
+
+      return Builder->CreateCall(CalleeF, ArgValues, "calltmp");
   }
 }
 
@@ -1096,7 +1333,10 @@ Value *CallExprAST::codegen() {
   std::vector<Value *> ArgValues;
   int size = Args.size();
   for (int i = 0; i < size; i++) {
-    ArgValues.push_back(Args[i]->codegen());
+    Value *R = Args[i]->codegen();
+    Type *T = CalleeF->getArg(i)->getType();
+    TypeCast(T, R);
+    ArgValues.push_back(R);
     if (!ArgValues.back())
       return nullptr;
   }
@@ -1222,11 +1462,8 @@ Value *SimpStmtAST::codegen() {
   if (!Variable)
     return LogErrorV("Unknown variable name");
   
-  // Type casting.
-  if (Variable->getAllocatedType()->isIntegerTy() && R->getType()->isDoubleTy())
-    R = Builder->CreateFPToUI(R, Type::getInt32Ty(*TheContext), "tmp");
-  if (Variable->getAllocatedType()->isDoubleTy() && R->getType()->isIntegerTy())
-    R = Builder->CreateUIToFP(R, Type::getDoubleTy(*TheContext), "tmp");
+  Type *T = Variable->getAllocatedType();
+  TypeCast(T, R);
 
   Builder->CreateStore(R, Variable);
 
@@ -1478,6 +1715,32 @@ static void HandleDefinition() {
   }
 }
 
+static void HandleBinopDef() {
+  if (auto BinopAST = ParseBinopDef()) {
+    if (auto *FnIR = BinopAST->codegen()) {
+      fprintf(stderr, "Read binary operation definition:");
+      FnIR->print(errs());
+      fprintf(stderr, "\n");
+    }
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+static void HandleUnopDef() {
+  if (auto UnopAST = ParseUnopDef()) {
+    if (auto *FnIR = UnopAST->codegen()) {
+      fprintf(stderr, "Read unary operation definition:");
+      FnIR->print(errs());
+      fprintf(stderr, "\n");
+    }
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
 static void HandleExtern() {
   if (auto ProtoAST = ParseExtern()) {
     if (auto *FnIR = ProtoAST->codegen()) {
@@ -1501,6 +1764,12 @@ static void MainLoop() {
       return;
     case tok_def:
       HandleDefinition();
+      break;
+    case tok_binary_def:
+      HandleBinopDef();
+      break;
+    case tok_unary_def:
+      HandleUnopDef();
       break;
     case tok_extern:
       HandleExtern();
