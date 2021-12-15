@@ -405,6 +405,21 @@ public:
   Value *codegen() override;
 };
 
+/// ForStmtAST - Statement class for for control flow.
+class ForStmtAST : public StmtAST {
+  std::unique_ptr<StmtAST> Decl;
+  std::unique_ptr<ExprAST> Cond;
+  std::unique_ptr<StmtAST> Simp;
+  std::unique_ptr<BlockAST> Block;
+
+public:
+  ForStmtAST(std::unique_ptr<StmtAST> Decl, std::unique_ptr<ExprAST> Cond, 
+  std::unique_ptr<StmtAST> Simp, std::unique_ptr<BlockAST> Block)
+    : Decl(std::move(Decl)), Cond(std::move(Cond)), Simp(std::move(Simp)), Block(std::move(Block)) {}
+
+  Value *codegen() override;
+};
+
 /// RetStmtAST - Statement class for return statement.
 class RetStmtAST : public StmtAST {
   std::unique_ptr<ExprAST> Ret;
@@ -628,11 +643,6 @@ static std::unique_ptr<StmtAST> ParseDeclStatement() {
     }
   } while (CurTok == ',');
 
-  if (CurTok != ';') {
-    return LogErrorS("Expected ';' after a statement");
-  }
-  getNextToken(); // eat ';'
-
   return std::make_unique<DeclStmtAST>(DeclType, DeclNames, std::move(Vals));
 }
 
@@ -649,11 +659,6 @@ static std::unique_ptr<StmtAST> ParseSimpStatement() {
   getNextToken(); // eat '='
 
   auto E = ParseExpression(0);
-
-  if (CurTok != ';') {
-    return LogErrorS("Expected ';' after a statement");
-  }
-  getNextToken(); // eat ';'
 
   return std::make_unique<SimpStmtAST>(ident, std::move(E));
 }
@@ -714,14 +719,14 @@ static std::unique_ptr<StmtAST> ParseWhileStatement() {
   getNextToken(); // eat "while"
 
   if (CurTok != '(') {
-    return LogErrorS("Expected '(' in if statement");
+    return LogErrorS("Expected '(' in while statement");
   }
   getNextToken(); // eat '('
 
   auto Cond = ParseExpression(0);
 
   if (CurTok != ')') {
-    return LogErrorS("Expected ')' in if statement");
+    return LogErrorS("Expected ')' in while statement");
   }
   getNextToken(); // eat ')'
 
@@ -730,17 +735,51 @@ static std::unique_ptr<StmtAST> ParseWhileStatement() {
   return std::make_unique<WhileStmtAST>(std::move(Cond), std::move(Block));
 }
 
+
+/// for statement
+static std::unique_ptr<StmtAST> ParseForStatement() {
+  getNextToken(); // eat "for"
+
+  if (CurTok != '(') {
+    return LogErrorS("Expected '(' in for statemet");
+  }
+  getNextToken(); // eat '('
+
+  auto Decl = ParseDeclStatement();
+
+  if (CurTok != ';') {
+    return LogErrorS("Expected ';' in for statement");
+  }
+  getNextToken(); // eat ';'
+
+  auto Cond = ParseExpression(0);
+
+  if (CurTok != ';') {
+    std::cout << CurTok << std::endl;
+    return LogErrorS("Expected ';' in for statement");
+  }
+  getNextToken(); // eat ';'
+
+  auto Simp = ParseSimpStatement();
+
+  if (CurTok != ')') {
+    std::cout << CurTok << std::endl;
+    return LogErrorS("Expected ')' in for statement");
+  }
+  getNextToken(); // eat ')'
+
+  auto Block = ParseBlock();
+
+  return std::make_unique<ForStmtAST>(std::move(Decl), std::move(Cond), std::move(Simp), std::move(Block));
+}
+
+
 /// return statement
 /// <return>
 static std::unique_ptr<StmtAST> ParseRetStatement() {
   getNextToken(); // eat "return"
 
   auto E = ParseExpression(0);
-
-  if (CurTok != ';') {
-    return LogErrorS("Expected ';' after a statement");
-  }
-  getNextToken(); // eat ';'
 
   return std::make_unique<RetStmtAST>(std::move(E));
 }
@@ -749,21 +788,43 @@ static std::unique_ptr<StmtAST> ParseRetStatement() {
 /// statement 
 /// <stmt>
 static std::unique_ptr<StmtAST> ParseStatement() {
+  std::unique_ptr<StmtAST> Result;
   switch (CurTok)
   {
   case tok_def:
-    return ParseDeclStatement();
+    Result = ParseDeclStatement();
+    if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+    }
+    getNextToken(); // eat ';'
+    break;
   case tok_identifier:
-    return ParseSimpStatement();
+    Result = ParseSimpStatement();
+    if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+    }
+    getNextToken(); // eat ';'
+    break;
   case tok_return:
-    return ParseRetStatement();
+    Result = ParseRetStatement();
+    if (CurTok != ';') {
+    return LogErrorS("Expected ';' after a statement");
+    }
+    getNextToken(); // eat ';'
+    break;
   case tok_if:
-    return ParseIfStatement();
+    Result = ParseIfStatement();
+    break;
   case tok_while:
-    return ParseWhileStatement();
+    Result = ParseWhileStatement();
+    break;
+  case tok_for:
+    Result = ParseForStatement();
+    break;
   default:
     return LogErrorS("Invalid statement input");
   }
+  return Result;
 }
 
 
@@ -1235,6 +1296,12 @@ Value *IfStmtAST::codegen() {
 
 
 Value *WhileStmtAST::codegen() {
+  // TODO
+  return Constant::getNullValue(Type::getDoubleTy(*TheContext));
+}
+
+
+Value *ForStmtAST::codegen() {
   // TODO
   return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
