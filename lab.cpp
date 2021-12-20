@@ -948,7 +948,7 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
 }
 
 
-/// binary operator definition in <def>
+/// binary operator definition in <opdef>
 static std::unique_ptr<FunctionAST> ParseBinopDef() {
   getNextToken(); // eat "binary"
 
@@ -1019,7 +1019,7 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
 }
 
 
-/// unary operator definition in <def>
+/// unary operator definition in <opdef>
 static std::unique_ptr<FunctionAST> ParseUnopDef() {
   getNextToken(); // eat "unary"
 

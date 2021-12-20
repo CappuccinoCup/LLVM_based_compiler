@@ -1,0 +1,16 @@
+binary & 10 int(int a, int b) {
+    if (a != 0)
+        if (b != 0)
+            return 1;
+    return 0;
+}
+
+struct Triangle {
+    double a;
+    double b;
+    double c;
+};
+
+int isTriangle(Triangle t) {
+    return t.a < t.b + t.c & t.b < t.a + t.c & t.c < t.a + t.b;
+}

@@ -26,8 +26,9 @@ Our goal is to complete these rules:
 <program>		::= <gdecl>*<def>*<function>*
 
 <gdecl> 		::= extern <prototype>;
-<def>			::= unary <any><intconst><type>(<type><ident>)<body>
+<opdef>			::= unary <any><intconst><type>(<type><ident>)<body>
 					|binary <any><intconst><type>(<type><ident>,<type><ident>)<body>
+<sdef>			::= struct <ident>{[<type><ident>;]*}
 <function> 		::= <prototype><body>
 
 <prototype> 	::= <type><ident>(<paramlist>)
@@ -36,19 +37,20 @@ Our goal is to complete these rules:
 <stmt>			::= <decl>;|<simp>;|<control>|<return>;
 
 <decl>			::= <type><ident>[=<exp>][,<ident>[=<exp>]]*
-<simp>			::= <ident>=<exp>
+<simp>			::= <val>=<exp>
 <control>		::= if(<exp>)<block>[else<block>]
 					|while(<exp>)<block>
 					|for([<decl>];[<exp>];[<simp>])<block>
 <block>			::= <stmt>|{[<stmt>]*}
 <return>		::= return <exp>
 
-<exp>			::= (<exp>)|<const>|<ident>
+<exp>			::= (<exp>)|<const>|<var>
 					|<exp><binop><exp>|<unop><exp>
 					|<callee>
 <callee>		::= <ident>(ε|<exp>[,<exp>]*)
 
-<type>			::= int|double|char
+<type>			::= int|double|char|struct <ident>
+<var>			::= <ident>[.<ident>]*
 <ident>			::= [A-Z_a-z][0-9A-Z_a-z]*
 <const>			::= <intconst>|<doubleconst>|<charconst>
 <unop>			::= <any>
@@ -64,10 +66,12 @@ Compared to the baseline of Lab5, we add these features:
 1. Support type "char", e.g., char a; a = 'a';.
 2. Support control flow "for".
 3. Support a block instead of a single statement in control flow.
-4. Support assignment in declaration statement, e.g., char a = 'a', b = 'b';.
-5. Support binary operation "==", "!=" & "<=".
-6. Support comment start with "#".
-7. Support user-defined unary & binary operators. (\<def\> above).
+4. Support the scope of a variable.
+5. Support assignment in declaration statement, e.g., char a = 'a', b = 'b';.
+6. Support binary operation "==", "!=" & "<=".
+7. Support comment start with "#".
+8. Support user-defined unary & binary operators. (\<opdef\> above).
+9. Support struct. (\<sdef\> above).
 
 
 ## Files
@@ -82,9 +86,15 @@ Compared to the baseline of Lab5, we add these features:
 
 `lab.cpp` is the source file of our compiler.
 
-`/test` contains more test cases.
+`test_*/` contains more test cases.
 
-`/document` contains the lab documents from lab1 to lab5.
+`testdriver.cpp` contains the main function to run the test without .cpp file.
+
+`test.sh` is the shell script to run the test driver.
+
+`document/` contains the lab documents from lab1 to lab5.
+
+`README.md` is this file.
 
 ## Reference
 1. Lab documents (/document/*.pdf)
