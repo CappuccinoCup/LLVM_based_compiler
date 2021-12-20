@@ -1,4 +1,4 @@
-binary & 10 int(int a, int b) {
+binary & 5 int(int a, int b) {
     if (a != 0)
         if (b != 0)
             return 1;
@@ -11,6 +11,22 @@ struct Triangle {
     double c;
 };
 
-int isTriangle(Triangle t) {
+struct TwoTriangles {
+    struct Triangle a;
+    int b;
+    struct Triangle c;
+};
+
+int isTriangle(struct Triangle t) {
     return t.a < t.b + t.c & t.b < t.a + t.c & t.c < t.a + t.b;
+}
+
+double foo(int a, struct TwoTriangles b) {
+    double result = 0;
+    double delta = a * (b.a.a + b.a.b + b.a.c);
+    result = result + delta;
+
+    double delta =  b.b * (b.c.a + b.c.b + b.c.c);
+    result = result + delta;
+    return result;
 }

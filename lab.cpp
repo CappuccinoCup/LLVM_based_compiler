@@ -73,6 +73,7 @@ enum Types {
   type_int = 1,     // int
   type_double = 2,  // double
   type_char = 3,    // char
+  type_struct = 4,
 };
 
 enum Ops {
@@ -100,6 +101,7 @@ static void InitializeTypeValue(){
   TypeValues["int"] = type_int;
   TypeValues["double"] = type_double;
   TypeValues["char"] = type_char;
+  TypeValues["struct"] = type_struct;
 }
 
 static void InitializeOpValue(){
@@ -131,8 +133,8 @@ static int gettok() {
         LastChar = fgetc(fip);
     } while (isalpha(LastChar) || isdigit(LastChar));
 
-    // int & double & char
-    if (word == "int" || word == "double" || word == "char") {
+    // int & double & char & struct
+    if (word == "int" || word == "double" || word == "char" || word == "struct") {
       ValType = TypeValues[word];
       return tok_def;
     }
@@ -270,6 +272,23 @@ static int gettok() {
 
 namespace {
 
+/// StructAST - Class for struct type.
+class StructAST {
+  std::string Name;
+  std::vector<std::string> Elements;
+  std::vector<int> ElementTypes;
+  std::vector<std::string> StructTypeNames;
+
+public:
+  StructAST(const std::string &Name, std::vector<std::string> Elements, 
+            std::vector<int> ElementTypes, std::vector<std::string> StructTypeNames)
+    : Name(Name), Elements(std::move(Elements)), 
+      ElementTypes(std::move(ElementTypes)), StructTypeNames(std::move(StructTypeNames)) {}
+
+  const std::string &getName() const { return Name; }
+  Value *codegen();
+};
+
 /// ExprAST - Base class for all expression nodes.
 class ExprAST {
 public:
@@ -306,13 +325,21 @@ public:
   Value *codegen() override;
 };
 
+struct PtrAndTy {
+  Value *V;
+  Type *T;
+};
+
 /// VariableExprAST - Expression class for referencing a variable, like "a".
 class VariableExprAST : public ExprAST {
   std::string Name;
+  std::vector<std::string> Element;
 
 public:
-  VariableExprAST(const std::string &Name) : Name(Name) {}
+  VariableExprAST(const std::string &Name, std::vector<std::string> Element)
+    : Name(Name), Element(std::move(Element)) {}
 
+  PtrAndTy *getVarPtrAndTy();
   Value *codegen() override;
 };
 
@@ -322,7 +349,7 @@ class UnaryExprAST : public ExprAST {
   std::unique_ptr<ExprAST> RHS;
 
 public:
-  UnaryExprAST(std::string Op, std::unique_ptr<ExprAST> RHS)
+  UnaryExprAST(const std::string &Op, std::unique_ptr<ExprAST> RHS)
     : Op(Op), RHS(std::move(RHS)) {}
 
   Value *codegen() override;
@@ -334,7 +361,7 @@ class BinaryExprAST : public ExprAST {
   std::unique_ptr<ExprAST> LHS, RHS;
 
 public:
-  BinaryExprAST(std::string Op, std::unique_ptr<ExprAST> LHS,
+  BinaryExprAST(const std::string &Op, std::unique_ptr<ExprAST> LHS,
                 std::unique_ptr<ExprAST> RHS)
       : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
 
@@ -365,24 +392,26 @@ public:
 /// DeclStmtAST - Statement class for declaration.
 class DeclStmtAST : public StmtAST {
   int DeclType;
+  std::string StructName;
   std::vector<std::string> Decls;
   std::vector<std::unique_ptr<ExprAST>> Vals;
 
 public:
-  DeclStmtAST(int DeclType, std::vector<std::string> Decls, std::vector<std::unique_ptr<ExprAST>> Vals)
-    : DeclType(DeclType), Decls(Decls), Vals(std::move(Vals)) {}
+  DeclStmtAST(int DeclType, const std::string &StructName, std::vector<std::string> Decls, 
+              std::vector<std::unique_ptr<ExprAST>> Vals)
+    : DeclType(DeclType), StructName(StructName), Decls(Decls), Vals(std::move(Vals)) {}
 
   Value *codegen();
 };
 
 /// SimpStmtAST - Statement class for simple statement "=".
 class SimpStmtAST : public StmtAST {
-  std::string Ident;
+  std::unique_ptr<VariableExprAST> Var;
   std::unique_ptr<ExprAST> RHS;
 
 public:
-  SimpStmtAST(std::string Ident, std::unique_ptr<ExprAST> RHS)
-    : Ident(Ident), RHS(std::move(RHS)) {}
+  SimpStmtAST(std::unique_ptr<VariableExprAST> Var, std::unique_ptr<ExprAST> RHS)
+    : Var(std::move(Var)), RHS(std::move(RHS)) {}
 
   Value *codegen();  
 };
@@ -456,16 +485,21 @@ class PrototypeAST {
   std::string Name;
   std::vector<std::string> Args;
   std::vector<int> ArgTypes;
+  std::vector<std::string> StructTypeNames;
   int FnType;
+  std::string FnStructTypeName;
 
 public:
-  PrototypeAST(const std::string &Name, std::vector<std::string> Args, std::vector<int> ArgTypes, int FnType)
-      : Name(Name), Args(std::move(Args)), ArgTypes(std::move(ArgTypes)), FnType(FnType) {}
+  PrototypeAST(const std::string &Name, std::vector<std::string> Args, std::vector<int> ArgTypes, 
+              std::vector<std::string> StructTypeNames, int FnType, const std::string &FnStructTypeName)
+      : Name(Name), Args(std::move(Args)), ArgTypes(std::move(ArgTypes)), 
+              StructTypeNames(std::move(StructTypeNames)), FnType(FnType), FnStructTypeName(FnStructTypeName) {}
 
   Function *codegen();
   const std::string &getName() const { return Name; }
   const int getReturnType() {return FnType;}
   const std::vector<int> &getArgTypes() {return ArgTypes;}
+  const std::vector<std::string> &getStructTypeNames() {return StructTypeNames;}
 };
 
 /// BodyAST - This class represents the body for a function.
@@ -550,6 +584,16 @@ static int getOpPrecedence(int tok) {
 }
 
 
+/// getStructName - Return struct name if this is a struct; "" instead.
+std::string getStructName() {
+  if (ValType == type_struct) {
+    getNextToken(); // eat "struct"
+    return IdentifierStr;
+  }
+  return "";
+}
+
+
 /// LogError* - These are little helper functions for error handling.
 std::unique_ptr<ExprAST> LogError(const char *Str) {
   fprintf(stderr, "Error: %s\n", Str);
@@ -581,9 +625,54 @@ std::unique_ptr<StmtAST> LogErrorS(const char *Str) {
   return nullptr;
 }
 
+std::unique_ptr<StructAST> LogErrorStruct(const char *Str) {
+  LogError(Str);
+  return nullptr;
+}
+
 
 static std::unique_ptr<ExprAST> ParseExpression(int precedence);
 static std::unique_ptr<StmtAST> ParseStatement();
+
+
+/// struct
+static std::unique_ptr<StructAST> ParseStruct() {
+  getNextToken(); // eat "struct"
+
+  if (CurTok != tok_identifier)
+    return LogErrorStruct("Expected valid struct name");
+  std::string Name = IdentifierStr;
+  getNextToken(); // eat <ident>
+
+  if (CurTok != '{')
+    return LogErrorStruct("Expected '{' in struct definition");
+  getNextToken(); // eat '{'
+
+  std::vector<std::string> Elements;
+  std::vector<int> ElementTypes;
+  std::vector<std::string> StructTypeNames;
+  while (CurTok != '}') {
+    if (CurTok != tok_def)
+      return LogErrorStruct("Expected valid type in struct definition");
+    ElementTypes.push_back(ValType);
+    StructTypeNames.push_back(getStructName());
+    getNextToken(); // eat <type>
+    if (CurTok != tok_identifier)
+      return LogErrorStruct("Expected valid identifier name in struct definition");
+    Elements.push_back(IdentifierStr);
+    getNextToken(); // eat <ident>
+    if (CurTok != ';')
+      return LogErrorStruct("Expected ';' after a element");
+    getNextToken(); // eat ';'
+  }
+
+  getNextToken(); // eat '}'
+  if (CurTok != ';')
+    return LogErrorStruct("Expected ';' after a element");
+  getNextToken(); // eat ';'
+
+  return std::make_unique<StructAST>(Name, std::move(Elements), std::move(ElementTypes), std::move(StructTypeNames));
+}
 
 
 /// <intconst> & <doubleconst>
@@ -608,13 +697,23 @@ static std::unique_ptr<ExprAST> ParseCharExpr() {
 }
 
 
-/// <ident> & <callee>
+/// <var> & <callee>
 static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string ident = IdentifierStr;
   getNextToken(); // eat <ident>
 
-  if (CurTok != '(')
-    return std::make_unique<VariableExprAST>(ident);
+  if (CurTok != '(') {
+    std::vector<std::string> Element;
+    while (CurTok == '.') {
+      getNextToken(); // eat '.'
+
+      if (CurTok != tok_identifier)
+        return LogError("Expected '.' when using struct element");
+      Element.push_back(IdentifierStr);
+      getNextToken(); // eat <ident>
+    }
+    return std::make_unique<VariableExprAST>(ident, std::move(Element));
+  }
   getNextToken(); // eat '('
 
   std::vector<std::unique_ptr<ExprAST>> Args;
@@ -695,7 +794,8 @@ static std::unique_ptr<ExprAST> ParseExpression(int precedence) {
 /// <decl>
 static std::unique_ptr<StmtAST> ParseDeclStatement() {
   int DeclType = ValType;
-  
+  std::string StructName = getStructName();
+
   std::vector<std::string> DeclNames;
   std::vector<std::unique_ptr<ExprAST>> Vals;
 
@@ -713,7 +813,7 @@ static std::unique_ptr<StmtAST> ParseDeclStatement() {
     }
   } while (CurTok == ',');
 
-  return std::make_unique<DeclStmtAST>(DeclType, DeclNames, std::move(Vals));
+  return std::make_unique<DeclStmtAST>(DeclType, StructName, DeclNames, std::move(Vals));
 }
 
 
@@ -722,13 +822,24 @@ static std::unique_ptr<StmtAST> ParseSimpStatement() {
   std::string ident = IdentifierStr;
   getNextToken(); // eat <ident>
 
+  std::vector<std::string> Element;
+  while (CurTok == '.') {
+    getNextToken(); // eat '.'
+
+    if (CurTok != tok_identifier)
+      return LogErrorS("Expected '.' when using struct element");
+    Element.push_back(IdentifierStr);
+    getNextToken(); // eat <ident>
+  }
+  auto V = std::make_unique<VariableExprAST>(ident, std::move(Element));
+  
   if (CurTok != '=')
     return LogErrorS("Expected '=' in simple statement");
   getNextToken(); // eat '='
 
   auto E = ParseExpression(0);
 
-  return std::make_unique<SimpStmtAST>(ident, std::move(E));
+  return std::make_unique<SimpStmtAST>(std::move(V), std::move(E));
 }
 
 
@@ -881,6 +992,8 @@ static std::unique_ptr<StmtAST> ParseStatement() {
 /// <prototype>
 static std::unique_ptr<PrototypeAST> ParsePrototype() {
   int FnType = ValType;
+  std::string FnStructTypeName = getStructName();
+  
   getNextToken(); // eat <type>
   if (CurTok != tok_identifier)
     return LogErrorP("Expected function name in prototype");
@@ -894,8 +1007,10 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
 
   std::vector<std::string> ArgNames;
   std::vector<int> ArgTypes;
+  std::vector<std::string> StructTypeNames;
   if (CurTok == tok_def) {
     ArgTypes.push_back(ValType);
+    StructTypeNames.push_back(getStructName());
     getNextToken(); // eat <type>
     if (CurTok != tok_identifier)
       return LogErrorP("Expected valid arg name in paramlist");
@@ -906,6 +1021,7 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
       if (CurTok != tok_def)
         return LogErrorP("Expected arg type in paramlist");
       ArgTypes.push_back(ValType);
+      StructTypeNames.push_back(getStructName());
       getNextToken(); // eat <type>
       if (CurTok != tok_identifier)
         return LogErrorP("Expected valid arg name in paramlist");
@@ -918,7 +1034,8 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
     return LogErrorP("Expected ')' in prototype");
   getNextToken(); // eat ')'
 
-  return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+  return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), 
+                                        std::move(StructTypeNames), FnType, FnStructTypeName);
 }
 
 
@@ -966,6 +1083,7 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
     return LogErrorF("Expected type in binary operator definition");
   }
   int FnType = ValType;
+  std::string FnStructTypeName = getStructName();
   getNextToken(); // eat <type>
 
   if (CurTok != '(') {
@@ -974,12 +1092,14 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
   getNextToken(); // eat '('
 
   std::vector<int> ArgTypes;
+  std::vector<std::string> StructTypeNames;
   std::vector<std::string> ArgNames;
 
   if (CurTok != tok_def) {
     return LogErrorF("Invalid argument type in binary operator definition");
   }
   ArgTypes.push_back(ValType);
+  StructTypeNames.push_back(getStructName());
   getNextToken(); // eat <type>
 
   if (CurTok != tok_identifier) {
@@ -997,6 +1117,7 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
     return LogErrorF("Invalid argument type in binary operator definition");
   }
   ArgTypes.push_back(ValType);
+  StructTypeNames.push_back(getStructName());
   getNextToken(); // eat <type>
 
   if (CurTok != tok_identifier) {
@@ -1013,7 +1134,8 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
   DefBinopNames.insert(FnName[0]);
   DefOpPrecedence[FnName[0]] = Pre;
 
-  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), 
+                                              std::move(StructTypeNames),FnType, FnStructTypeName);
   auto Body = ParseBody();
   return std::make_unique<FunctionAST>(std::move(Proto), std::move(Body));
 }
@@ -1037,6 +1159,7 @@ static std::unique_ptr<FunctionAST> ParseUnopDef() {
     return LogErrorF("Expected type in unary operator definition");
   }
   int FnType = ValType;
+  std::string FnStructTypeName = getStructName();
   getNextToken(); // eat <type>
 
   if (CurTok != '(') {
@@ -1045,12 +1168,14 @@ static std::unique_ptr<FunctionAST> ParseUnopDef() {
   getNextToken(); // eat '('
 
   std::vector<int> ArgTypes;
+  std::vector<std::string> StructTypeNames;
   std::vector<std::string> ArgNames;
 
   if (CurTok != tok_def) {
     return LogErrorF("Invalid argument type in unary operator definition");
   }
   ArgTypes.push_back(ValType);
+  StructTypeNames.push_back(getStructName());
   getNextToken(); // eat <type>
 
   if (CurTok != tok_identifier) {
@@ -1067,7 +1192,8 @@ static std::unique_ptr<FunctionAST> ParseUnopDef() {
   DefUnopNames.insert(FnName[0]);
   DefOpPrecedence[FnName[0]] = Pre;
 
-  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), FnType);
+  auto Proto = std::make_unique<PrototypeAST>(FnName, std::move(ArgNames), std::move(ArgTypes), 
+                                              std::move(StructTypeNames), FnType, FnStructTypeName);
   auto Body = ParseBody();
   return std::make_unique<FunctionAST>(std::move(Proto), std::move(Body));
 }
@@ -1093,10 +1219,17 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<Module> TheModule;
 static std::unique_ptr<IRBuilder<>> Builder;
-static std::stack<std::set<std::string>*> BlockValueNames;                // block local variables
-static std::stack<std::map<std::string, AllocaInst*>*> OldNamedValues;    // hidden variables
-static std::map<std::string, AllocaInst*> NamedValues;                    // visible variables
-static bool HasReturned;                                                  // if the function has returned
+// Struct
+static std::map<std::string, StructType*> StructTypes;                      // struct name to struct type
+static std::map<std::string, std::vector<std::string>*> StructElementNames; // struct name to struct element names
+static std::stack<std::map<std::string, std::string>*> OldStructValues;     // hidden struct variables
+static std::map<std::string, std::string> StructValues;                     // visible struct variables       
+// Block
+static std::stack<std::set<std::string>*> BlockValueNames;                  // block local variables
+static std::stack<std::map<std::string, AllocaInst*>*> OldNamedValues;      // hidden variables
+static std::map<std::string, AllocaInst*> NamedValues;                      // visible variables
+// Function
+static bool HasReturned;                                                    // if the function has returned
 static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
 
@@ -1129,6 +1262,17 @@ Function *getFunction(std::string Name) {
 }
 
 
+/// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of
+/// the function.  This is used for mutable variables etc.
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
+                                          const std::string &VarName,
+                                          Type *ty) {
+  IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
+                  TheFunction->getEntryBlock().begin());
+  return TmpB.CreateAlloca(ty, nullptr, VarName.c_str());
+}
+
+
 /// TypeMerge - Merge two type with the following rules:
 /// int ~ int -> int          int ~ double -> double
 /// double ~ int -> double    double ~ double -> double
@@ -1158,35 +1302,68 @@ static void TypeCast(Type *T, Value* &R) {
 }
 
 
-/// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of
-/// the function.  This is used for mutable variables etc.
-static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
-                                          const std::string &VarName,
-                                          Type *ty) {
-  IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
-                  TheFunction->getEntryBlock().begin());
-  return TmpB.CreateAlloca(ty, nullptr, VarName.c_str());
-}
-
-
 /// EnterBlock - Enter a block.
-static void EnterBlock(std::set<std::string> *scopeNames, std::map<std::string, AllocaInst*> *scopeValues) {
+static void EnterBlock(std::set<std::string> *scopeNames, 
+                      std::map<std::string, AllocaInst*> *scopeValues,
+                      std::map<std::string, std::string> *scopeStructValues) {
   BlockValueNames.push(scopeNames);
   OldNamedValues.push(scopeValues);
+  OldStructValues.push(scopeStructValues);
 }
 
 /// LeaveBlock - Leave a block.
 /// Restore the variables hidden by block local variables.
-static void LeaveBlock(std::set<std::string> *scopeNames, std::map<std::string, AllocaInst*> *scopeValues) {
+static void LeaveBlock(std::set<std::string> *scopeNames, 
+                      std::map<std::string, AllocaInst*> *scopeValues,
+                      std::map<std::string, std::string> *scopeStructValues) {
   for (auto name : *scopeNames) {
     AllocaInst *val = (*scopeValues)[name];
-    if (val) 
+    if (val) {
       NamedValues[name] = val;
-    else 
+      StructValues[name] = (*scopeStructValues)[name];
+    } else {
       NamedValues.erase(name);
+      StructValues.erase(name);
+    }
   }
   BlockValueNames.pop();
   OldNamedValues.pop();
+  OldStructValues.pop();
+}
+
+
+Value *StructAST::codegen() {
+  StructType *structType = StructType::create(*TheContext, Name);
+  std::vector<Type*> elements;
+  std::vector<std::string> *elementNames = new std::vector<std::string>;
+  int size = Elements.size();
+  for (int i = 0; i < size; i++) {
+    Type *T;
+    switch (ElementTypes[i]) {
+      case type_int:
+        T = Type::getInt32Ty(*TheContext);
+        break;
+      case type_double:
+        T = Type::getDoubleTy(*TheContext);
+        break;
+      case type_char:
+        T = Type::getInt32Ty(*TheContext);
+        break;
+      case type_struct:
+        T = StructTypes[StructTypeNames[i]];
+        break;
+      default:
+        return LogErrorFn("Invalid return value type");
+    }
+    elements.push_back(T);
+    elementNames->push_back(Elements[i]);
+  }
+  structType->setBody(elements);
+
+  StructTypes[Name] = structType;
+  StructElementNames[Name] = elementNames;
+  
+  return nullptr;
 }
 
 
@@ -1205,11 +1382,53 @@ Value *CharExprAST::codegen() {
 }
 
 
-Value *VariableExprAST::codegen() {
+PtrAndTy *VariableExprAST::getVarPtrAndTy() {
+  struct PtrAndTy *R = new struct PtrAndTy;
+
+  if (Element.empty()) {
+    AllocaInst *V = NamedValues[Name];
+    if (!V)
+        return nullptr;
+    R->V = V;
+    R->T = V->getAllocatedType();
+    return R;
+  }
+
   Value *V = NamedValues[Name];
   if (!V)
-    return LogErrorV("Unknown variable name");
-  return Builder->CreateLoad(V, Name.c_str());
+      return nullptr;
+
+  std::string StructName = StructValues[Name];
+  Type *T;
+  for (std::string str : Element) {
+    std::vector<std::string> *ElementNames = StructElementNames[StructName];
+    int size = ElementNames->size();
+    int i;
+    for (i = 0; i < size; i++) {
+      if (str == ElementNames->at(i))
+        break;
+    }
+    Value *const_0 = ConstantInt::get(IntegerType::getInt32Ty(*TheContext), 0);
+    Value *const_index = ConstantInt::get(IntegerType::getInt32Ty(*TheContext), i);
+    SmallVector<Value*, 2> indexVector;
+    indexVector.push_back(const_0);
+    indexVector.push_back(const_index);
+    
+    V = Builder->CreateGEP(V, indexVector);
+    T = StructTypes[StructName]->getElementType(i);
+    if (T->isStructTy())
+      StructName = T->getStructName().str();
+  }
+
+  R->V = V;
+  R->T = T;
+  return R;
+}
+
+
+Value *VariableExprAST::codegen() {
+  PtrAndTy *VT = getVarPtrAndTy();
+  return Builder->CreateLoad(VT->T, VT->V, Name.c_str());
 }
 
 
@@ -1339,6 +1558,9 @@ Function *PrototypeAST::codegen() {
     case type_char:
       Result = Type::getInt32Ty(*TheContext);
       break;
+    case type_struct:
+      Result = PointerType::get(StructTypes[FnStructTypeName], 0);
+      break;
     default:
       return LogErrorFn("Invalid return value type");
   }
@@ -1355,6 +1577,9 @@ Function *PrototypeAST::codegen() {
         break;
       case type_char:
         Params.push_back(Type::getInt32Ty(*TheContext));
+        break;
+      case type_struct:
+        Params.push_back(PointerType::get(StructTypes[StructTypeNames[i]], 0));
         break;
       default:
         return LogErrorFn("Invalid parameter value type");
@@ -1390,6 +1615,8 @@ Value *DeclStmtAST::codegen() {
     ty = Type::getInt32Ty(*TheContext);
   if (DeclType == type_double)
     ty = Type::getDoubleTy(*TheContext);
+  if (DeclType == type_struct)
+    ty = StructTypes[StructName];
 
   int size = Decls.size();
   for (int i = 0; i < size; i++) {
@@ -1413,12 +1640,15 @@ Value *DeclStmtAST::codegen() {
         scopeNames->insert(Decl);
         // Restore the existing variable with the same name.
         AllocaInst *OldValue = NamedValues[Decl];
-        if (OldValue)
+        if (OldValue) {
           (*(OldNamedValues.top()))[Decl] = OldValue;
+          (*(OldStructValues.top()))[Decl] = StructValues[Decl];
+        }
       }
     }
     // Add arguments to variable symbol table.
     NamedValues[Decl] = Alloca;
+    StructValues[Decl] = StructName;
 
     // Initialize
     if (Vals[i] != nullptr)
@@ -1434,11 +1664,12 @@ Value *SimpStmtAST::codegen() {
   if (!R)
     return nullptr;
 
-  AllocaInst *Variable = NamedValues[Ident];
+  PtrAndTy *VT = Var->getVarPtrAndTy();
+  Value *Variable = VT->V;
   if (!Variable)
     return LogErrorV("Unknown variable name");
   
-  Type *T = Variable->getAllocatedType();
+  Type *T = VT->T;
   TypeCast(T, R);
 
   Builder->CreateStore(R, Variable);
@@ -1480,9 +1711,10 @@ Value *IfStmtAST::codegen() {
 
   std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
-  EnterBlock(&scopeNames, &scopeValues);
+  std::map<std::string, std::string> scopeStructValues;
+  EnterBlock(&scopeNames, &scopeValues, &scopeStructValues);
   Then->codegen();
-  LeaveBlock(&scopeNames, &scopeValues);
+  LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
   Builder->CreateBr(MergeBB);
 
@@ -1492,9 +1724,10 @@ Value *IfStmtAST::codegen() {
   if (Else) {
     std::set<std::string> scopeNames;
     std::map<std::string, AllocaInst*> scopeValues;
-    EnterBlock(&scopeNames, &scopeValues);
+    std::map<std::string, std::string> scopeStructValues;
+    EnterBlock(&scopeNames, &scopeValues, &scopeStructValues);
     Else->codegen();
-    LeaveBlock(&scopeNames, &scopeValues);
+    LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
   }
 
   Builder->CreateBr(MergeBB);
@@ -1524,9 +1757,10 @@ Value *WhileStmtAST::codegen() {
 
   std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
-  EnterBlock(&scopeNames, &scopeValues);
+  std::map<std::string, std::string> scopeStructValues;
+  EnterBlock(&scopeNames, &scopeValues, &scopeStructValues);
   Loop->codegen();
-  LeaveBlock(&scopeNames, &scopeValues);
+  LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
   CondV = Cond->codegen();
   if (!CondV)
@@ -1555,7 +1789,8 @@ Value *ForStmtAST::codegen() {
 
   std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
-  EnterBlock(&scopeNames, &scopeValues);
+  std::map<std::string, std::string> scopeStructValues;
+  EnterBlock(&scopeNames, &scopeValues, &scopeStructValues);
   
   Decl->codegen();
 
@@ -1581,7 +1816,7 @@ Value *ForStmtAST::codegen() {
   CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
   Builder->CreateCondBr(CondV, LoopBB, AfterBB);
 
-  LeaveBlock(&scopeNames, &scopeValues);
+  LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
   Builder->SetInsertPoint(AfterBB);
 
@@ -1618,12 +1853,22 @@ Function *FunctionAST::codegen() {
 
   // Reset NamedValues & HasReturned
   NamedValues.clear();
+  StructValues.clear();
   HasReturned = false;
 
   // Allocate for arguments
   for (auto &Arg : TheFunction->args()) {
-    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, std::string(Arg.getName()), Arg.getType());
-    Builder->CreateStore(&Arg, Alloca);
+    AllocaInst *Alloca;
+    Type *T = Arg.getType();
+    if (T->isPointerTy() && T->getPointerElementType()->isStructTy()) {
+      Alloca = CreateEntryBlockAlloca(TheFunction, std::string(Arg.getName()), T->getPointerElementType());
+      Value *V = Builder->CreateLoad(&Arg);
+      Builder->CreateStore(V, Alloca);
+      StructValues[std::string(Arg.getName())] = T->getPointerElementType()->getStructName().str();
+    } else {
+      Alloca = CreateEntryBlockAlloca(TheFunction, std::string(Arg.getName()), T);
+      Builder->CreateStore(&Arg, Alloca);
+    }
     NamedValues[std::string(Arg.getName())] = Alloca;
   }
 
@@ -1671,6 +1916,16 @@ static void HandleDefinition() {
       FnIR->print(errs());
       fprintf(stderr, "\n");
     }
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+static void HandleStructDef() {
+  if (auto SAST = ParseStruct()) {
+    fprintf(stderr, "Read struct definition for %s\n", SAST->getName().c_str());
+    SAST->codegen();
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -1725,7 +1980,10 @@ static void MainLoop() {
     case tok_eof:
       return;
     case tok_def:
-      HandleDefinition();
+      if (ValType == type_struct)
+        HandleStructDef();
+      else
+        HandleDefinition();
       break;
     case tok_binary_def:
       HandleBinopDef();

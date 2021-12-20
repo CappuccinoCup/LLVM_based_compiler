@@ -6,14 +6,14 @@ unary ! 50 int(int a) {
     }
 }
 
-binary & 10 int(int a, int b) {
+binary & 5 int(int a, int b) {
     if (a != 0)
         if (b != 0)
             return 1;
     return 0;
 }
 
-binary | 10 int(int a, int b) {
+binary | 5 int(int a, int b) {
     if (a == 0)
         if (b == 0)
             return 0;
@@ -21,9 +21,9 @@ binary | 10 int(int a, int b) {
 }
 
 int foo(char a, double b) {
-    if ((a == 'a') & (b == 1.1))
+    if (a == 'a' & b == 1.1)
         return 1;
-    if ((a == 'b') | (b == 3.3))
+    if (a == 'b' | b == 3.3)
         return 23;
     return 0;
 }
@@ -32,7 +32,7 @@ double bar(int a, char b) {
     if (b == 'a') {
         return a;
     }
-    if (!(b == 'c') | a == 3) {
+    if ((!(b == 'c')) | a == 3) {
         return a * a;
     }
     return 0;
