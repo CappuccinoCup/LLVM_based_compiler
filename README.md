@@ -84,6 +84,8 @@ Compared to the baseline of Lab5, we add these features:
 
 `main.cpp` contains the main function to run the functions in output.o.
 
+`lab` is the executable file compiled from lab.cpp. 
+
 `lab.cpp` is the source file of our compiler.
 
 `test_*/` contains more test cases.

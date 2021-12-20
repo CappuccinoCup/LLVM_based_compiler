@@ -172,7 +172,6 @@ static int gettok() {
     return tok_identifier;
   }
 
-
   // Number.
   if (isdigit(LastChar)) {
     int integer = 0;
@@ -203,7 +202,6 @@ static int gettok() {
     return tok_type;
   }
 
-
   // Character.
   if (LastChar == '\'') {
     LastChar = fgetc(fip);
@@ -216,7 +214,6 @@ static int gettok() {
     CharVal = character;
     return tok_char;
   }
-
 
   // Operator.
   if (LastChar == '+' || LastChar == '-' || LastChar == '*' || LastChar == '<') {
@@ -243,7 +240,6 @@ static int gettok() {
     return op[0];
   }
 
-
   // Comment.
   if (LastChar == '#') {
     do
@@ -253,7 +249,6 @@ static int gettok() {
     if (LastChar != EOF) 
       return gettok();
   }
-
 
   // Check for end of file.
   if (LastChar == EOF)
@@ -594,6 +589,24 @@ std::string getStructName() {
 }
 
 
+/// parseOnceParam - Parse once parameter, e.g., int a.
+void parseOnceParam(std::vector<int> &ArgTypes, std::vector<std::string> &StructTypeNames,
+                    std::vector<std::string> &ArgNames) {
+  if (CurTok != tok_def)
+    return ;
+  ArgTypes.push_back(ValType);
+  StructTypeNames.push_back(getStructName());
+  getNextToken(); // eat <type>
+
+  if (CurTok != tok_identifier) {
+    ArgNames.push_back("");
+  } else {
+    ArgNames.push_back(IdentifierStr);
+    getNextToken(); // eat <ident>
+  }
+}
+
+
 /// LogError* - These are little helper functions for error handling.
 std::unique_ptr<ExprAST> LogError(const char *Str) {
   fprintf(stderr, "Error: %s\n", Str);
@@ -652,15 +665,7 @@ static std::unique_ptr<StructAST> ParseStruct() {
   std::vector<int> ElementTypes;
   std::vector<std::string> StructTypeNames;
   while (CurTok != '}') {
-    if (CurTok != tok_def)
-      return LogErrorStruct("Expected valid type in struct definition");
-    ElementTypes.push_back(ValType);
-    StructTypeNames.push_back(getStructName());
-    getNextToken(); // eat <type>
-    if (CurTok != tok_identifier)
-      return LogErrorStruct("Expected valid identifier name in struct definition");
-    Elements.push_back(IdentifierStr);
-    getNextToken(); // eat <ident>
+    parseOnceParam(ElementTypes, StructTypeNames, Elements);
     if (CurTok != ';')
       return LogErrorStruct("Expected ';' after a element");
     getNextToken(); // eat ';'
@@ -1009,24 +1014,10 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
   std::vector<int> ArgTypes;
   std::vector<std::string> StructTypeNames;
   if (CurTok == tok_def) {
-    ArgTypes.push_back(ValType);
-    StructTypeNames.push_back(getStructName());
-    getNextToken(); // eat <type>
-    if (CurTok != tok_identifier)
-      return LogErrorP("Expected valid arg name in paramlist");
-    ArgNames.push_back(IdentifierStr);
-    getNextToken(); // eat <ident>
+    parseOnceParam(ArgTypes, StructTypeNames, ArgNames);
     while (CurTok == ',') {
       getNextToken(); // eat ','
-      if (CurTok != tok_def)
-        return LogErrorP("Expected arg type in paramlist");
-      ArgTypes.push_back(ValType);
-      StructTypeNames.push_back(getStructName());
-      getNextToken(); // eat <type>
-      if (CurTok != tok_identifier)
-        return LogErrorP("Expected valid arg name in paramlist");
-      ArgNames.push_back(IdentifierStr);
-      getNextToken(); // eat <ident>
+      parseOnceParam(ArgTypes, StructTypeNames, ArgNames);
     }
   }
   
@@ -1048,8 +1039,6 @@ static std::unique_ptr<BodyAST> ParseBody() {
   while (CurTok != '}')
   {
     auto S = ParseStatement();
-    if (S == nullptr)
-      return nullptr;
     Stmts.push_back(std::move(S));
   }
   getNextToken(); // eat '}'
@@ -1095,36 +1084,14 @@ static std::unique_ptr<FunctionAST> ParseBinopDef() {
   std::vector<std::string> StructTypeNames;
   std::vector<std::string> ArgNames;
 
-  if (CurTok != tok_def) {
-    return LogErrorF("Invalid argument type in binary operator definition");
-  }
-  ArgTypes.push_back(ValType);
-  StructTypeNames.push_back(getStructName());
-  getNextToken(); // eat <type>
-
-  if (CurTok != tok_identifier) {
-    return LogErrorF("Expected argument name in binary operator definition");
-  }
-  ArgNames.push_back(IdentifierStr);
-  getNextToken(); // eat <ident>
+  parseOnceParam(ArgTypes, StructTypeNames, ArgNames);
 
   if (CurTok != ',') {
     return LogErrorF("Lack of arguments in binary operator definition");
   }
   getNextToken(); // eat ','
 
-  if (CurTok != tok_def) {
-    return LogErrorF("Invalid argument type in binary operator definition");
-  }
-  ArgTypes.push_back(ValType);
-  StructTypeNames.push_back(getStructName());
-  getNextToken(); // eat <type>
-
-  if (CurTok != tok_identifier) {
-    return LogErrorF("Expected argument name in binary operator definition");
-  }
-  ArgNames.push_back(IdentifierStr);
-  getNextToken(); // eat <ident>
+  parseOnceParam(ArgTypes, StructTypeNames, ArgNames);
 
   if (CurTok != ')') {
     return LogErrorF("Expected ')' in binary operator definition");
@@ -1171,18 +1138,7 @@ static std::unique_ptr<FunctionAST> ParseUnopDef() {
   std::vector<std::string> StructTypeNames;
   std::vector<std::string> ArgNames;
 
-  if (CurTok != tok_def) {
-    return LogErrorF("Invalid argument type in unary operator definition");
-  }
-  ArgTypes.push_back(ValType);
-  StructTypeNames.push_back(getStructName());
-  getNextToken(); // eat <type>
-
-  if (CurTok != tok_identifier) {
-    return LogErrorF("Expected argument name in unary operator definition");
-  }
-  ArgNames.push_back(IdentifierStr);
-  getNextToken(); // eat <ident>
+  parseOnceParam(ArgTypes, StructTypeNames, ArgNames);
 
   if (CurTok != ')') {
     return LogErrorF("Expected ')' in unary operator definition");
@@ -1402,12 +1358,10 @@ PtrAndTy *VariableExprAST::getVarPtrAndTy() {
   Type *T;
   for (std::string str : Element) {
     std::vector<std::string> *ElementNames = StructElementNames[StructName];
-    int size = ElementNames->size();
-    int i;
-    for (i = 0; i < size; i++) {
+    int size = ElementNames->size(), i = 0;
+    for ( ; i < size; i++)
       if (str == ElementNames->at(i))
         break;
-    }
     Value *const_0 = ConstantInt::get(IntegerType::getInt32Ty(*TheContext), 0);
     Value *const_index = ConstantInt::get(IntegerType::getInt32Ty(*TheContext), i);
     SmallVector<Value*, 2> indexVector;
@@ -1873,9 +1827,6 @@ Function *FunctionAST::codegen() {
   }
 
   if (Value *RetVal = Body->codegen()) {
-    //****************
-    // Correctly create the RetVal use Builder.
-    //****************
     if (!HasReturned) {
       if (P.getReturnType() == type_double && RetVal->getType()->isIntegerTy())
         RetVal = Builder->CreateUIToFP(RetVal, Type::getDoubleTy(*TheContext), "tmp");
