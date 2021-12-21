@@ -17,6 +17,13 @@ struct TwoTriangles {
     struct Triangle c;
 };
 
+struct ThreeTriangles {
+    struct Triangle a;
+    int b;
+    struct TwoTriangles c;
+};
+
+
 int isTriangle(struct Triangle t) {
     return t.a < t.b + t.c & t.b < t.a + t.c & t.c < t.a + t.b;
 }
@@ -28,5 +35,20 @@ double foo(int a, struct TwoTriangles b) {
 
     double delta =  b.b * (b.c.a + b.c.b + b.c.c);
     result = result + delta;
+
+    return result;
+}
+
+double bar(int a, struct ThreeTriangles b) {
+    double result = 0;
+    double delta = a * (b.a.a + b.a.b + b.a.c);
+    result = result + delta;
+
+    double delta = b.b * (b.c.a.a + b.c.a.b + b.c.a.c);
+    result = result + delta;
+
+    double delta = b.c.b * (b.c.c.a + b.c.c.b + b.c.c.c);
+    result = result + delta;
+
     return result;
 }

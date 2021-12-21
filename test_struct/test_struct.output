@@ -4,3 +4,6 @@ t3 is a triangle: 0
 foo(1, tt1) is: 17.9
 foo(2, tt2) is: 47.8
 foo(3, tt3) is: 66
+bar(1, ttt1) is 45.9
+bar(2, ttt2) is 71.8
+bar(3, ttt3) is 75.9
