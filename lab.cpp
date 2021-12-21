@@ -172,6 +172,7 @@ static int gettok() {
     return tok_identifier;
   }
 
+
   // Number.
   if (isdigit(LastChar)) {
     int integer = 0;
@@ -202,6 +203,7 @@ static int gettok() {
     return tok_type;
   }
 
+
   // Character.
   if (LastChar == '\'') {
     LastChar = fgetc(fip);
@@ -214,6 +216,7 @@ static int gettok() {
     CharVal = character;
     return tok_char;
   }
+
 
   // Operator.
   if (LastChar == '+' || LastChar == '-' || LastChar == '*' || LastChar == '<') {
@@ -240,6 +243,7 @@ static int gettok() {
     return op[0];
   }
 
+
   // Comment.
   if (LastChar == '#') {
     do
@@ -250,9 +254,11 @@ static int gettok() {
       return gettok();
   }
 
+
   // Check for end of file.
   if (LastChar == EOF)
     return tok_eof;
+
 
   // Otherwise, just return the character as its ascii value.
   int ThisChar = LastChar;
@@ -949,7 +955,9 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
 /// <return>
 static std::unique_ptr<StmtAST> ParseRetStatement() {
   getNextToken(); // eat "return"
+
   auto E = ParseExpression(0);
+  
   return std::make_unique<RetStmtAST>(std::move(E));
 }
 
@@ -1706,8 +1714,13 @@ Value *IfStmtAST::codegen() {
 Value *WhileStmtAST::codegen() {
   Function *TheFunction = Builder->GetInsertBlock()->getParent();
 
+  BasicBlock *CondBB = BasicBlock::Create(*TheContext, "cond", TheFunction);
   BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
   BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "after", TheFunction);
+
+  Builder->CreateBr(CondBB);
+
+  Builder->SetInsertPoint(CondBB);
 
   Value *CondV = Cond->codegen();
   if (!CondV)
@@ -1727,17 +1740,8 @@ Value *WhileStmtAST::codegen() {
   Loop->codegen();
   LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
-  if (!BlockReturned.top()) {
-
-  CondV = Cond->codegen();
-  if (!CondV)
-    return nullptr;
-  if (CondV->getType()->isIntegerTy())
-    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
-  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
-  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
-
-  }
+  if (!BlockReturned.top())
+    Builder->CreateBr(CondBB);
   BlockReturned.pop();
 
   Builder->SetInsertPoint(AfterBB);
@@ -1750,6 +1754,7 @@ Value *ForStmtAST::codegen() {
   Function *TheFunction = Builder->GetInsertBlock()->getParent();
 
   BasicBlock *InitBB = BasicBlock::Create(*TheContext, "init", TheFunction);
+  BasicBlock *CondBB = BasicBlock::Create(*TheContext, "cond", TheFunction);
   BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
   BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "after", TheFunction);
 
@@ -1764,6 +1769,10 @@ Value *ForStmtAST::codegen() {
   
   Decl->codegen();
 
+  Builder->CreateBr(CondBB);
+
+  Builder->SetInsertPoint(CondBB);
+
   Value *CondV = Cond->codegen();
   if (!CondV)
     return nullptr;
@@ -1773,23 +1782,13 @@ Value *ForStmtAST::codegen() {
   Builder->CreateCondBr(CondV, LoopBB, AfterBB);
 
   Builder->SetInsertPoint(LoopBB);
-
   BlockReturned.push(false);
 
   Loop->codegen();
 
   if (!BlockReturned.top()) {
-
-  Simp->codegen();
-
-  CondV = Cond->codegen();
-  if (!CondV)
-    return nullptr;
-  if (CondV->getType()->isIntegerTy())
-    CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
-  CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
-  Builder->CreateCondBr(CondV, LoopBB, AfterBB);
-
+    Simp->codegen();
+    Builder->CreateBr(CondBB);
   }
   BlockReturned.pop();
 

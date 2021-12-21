@@ -1,1 +1,1 @@
-clang++ testdriver.cpp output.o -o testdriver;./testdriver
+clang++ testdriver.cpp output.o -o testdriver;./testdriver;rm testdriver
