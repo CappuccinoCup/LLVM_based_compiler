@@ -23,7 +23,7 @@ clang++ main.cpp output.o -o main # Link
 Our goal is to complete these rules:
 
 ```
-<program>		::= <gdecl>*<def>*<function>*
+<program>		::= <gdecl>*<opdef>*<sdef>*<function>*
 
 <gdecl> 		::= extern <prototype>;
 <opdef>			::= unary <any><intconst><type>(<type><ident>)<body>
@@ -33,7 +33,7 @@ Our goal is to complete these rules:
 
 <prototype> 	::= <type><ident>(<paramlist>)
 <paramlist> 	::= ε|<type><ident>[,<type><ident>]*
-<body>			::= {[<stmt>]*}
+<body>			::= {<stmt>*}
 <stmt>			::= <decl>;|<simp>;|<control>|<return>;
 
 <decl>			::= <type><ident>[=<exp>][,<ident>[=<exp>]]*
@@ -41,7 +41,7 @@ Our goal is to complete these rules:
 <control>		::= if(<exp>)<block>[else<block>]
 					|while(<exp>)<block>
 					|for([<decl>];[<exp>];[<simp>])<block>
-<block>			::= <stmt>|{[<stmt>]*}
+<block>			::= <stmt>|{<stmt>*}
 <return>		::= return <exp>
 
 <exp>			::= (<exp>)|<const>|<var>
@@ -49,10 +49,11 @@ Our goal is to complete these rules:
 					|<callee>
 <callee>		::= <ident>(ε|<exp>[,<exp>]*)
 
-<type>			::= int|double|char|struct <ident>
-<var>			::= <ident>[.<ident>]*
-<ident>			::= [A-Z_a-z][0-9A-Z_a-z]*
 <const>			::= <intconst>|<doubleconst>|<charconst>
+<var>			::= <ident>[.<ident>]*
+
+<type>			::= int|double|char|struct <ident>
+<ident>			::= [A-Z_a-z][0-9A-Z_a-z]*
 <unop>			::= <any>
 <binop>			::= +|-|*|<|==|!=|<=|<any>
 <intconst>		::= [0-9][0-9]*
@@ -71,8 +72,43 @@ Compared to the baseline of Lab5, we add these features:
 6. Support binary operation "==", "!=" & "<=".
 7. Support comment start with "#".
 8. Support user-defined unary & binary operators. (\<opdef\> above).
-9. Support struct. (\<sdef\> above).
+9. Support struct, but with some limitations. (\<sdef\> above).
 
+## Notes
+
+1. We will do type casting between primary data types automatically in binary operations, function arguments, function return type and so on. So feel relaxing to use primary data types.
+
+2. We treat a `char` type as a `int` type. It works well.
+
+3. We don't support a `boolean` type. We use double type as comparation result.
+
+4. A variable in a block will hide the variable with the same name outside the block. For example:
+
+   ```
+   int a = 1;
+   if (...) {
+   	double a = 2.2;
+   	return a;	// 2.2
+   }
+   return a;		// 1
+   ```
+
+5. We support variable overlap, that is to say, you can define a variable with the same name in a block twice or more. We only use the latest variable definition. For example:
+
+   ```
+   int a = 1;
+   if (...) return a;	// 1
+   double a = 2.2;
+   if (...) return a;	// 2.2
+   char a = 'c';
+   return c;			// 'c'
+   ```
+
+   You may be puzzled why we can return three different primary data types in a function. Don't forget that we will do type casting automatically. See Notes 1.
+
+6. At present, the precedence of a user-defined unary operation is useless, because it always has the lowest precedence. But I'm too lazy to solve the problem.
+
+7. We don't support pointer data type, so we cannot use struct type as argument to call a function in our program, nor can we use struct type as function return type. But we **treat struct data type in the function argument list as pointer type**, so the driver program (e.g., main.cpp) can use struct data type pointer to invoke our function.
 
 ## Files
 
