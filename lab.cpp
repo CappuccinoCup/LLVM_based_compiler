@@ -254,7 +254,6 @@ static int gettok() {
   if (LastChar == EOF)
     return tok_eof;
 
-
   // Otherwise, just return the character as its ascii value.
   int ThisChar = LastChar;
   LastChar = fgetc(fip);
@@ -1039,6 +1038,8 @@ static std::unique_ptr<BodyAST> ParseBody() {
   while (CurTok != '}')
   {
     auto S = ParseStatement();
+    if (S == nullptr)
+      return nullptr;
     Stmts.push_back(std::move(S));
   }
   getNextToken(); // eat '}'
@@ -1182,6 +1183,7 @@ static std::stack<std::map<std::string, std::string>*> OldStructValues;     // h
 static std::map<std::string, std::string> StructValues;                     // visible struct variables       
 // Block
 static std::stack<std::set<std::string>*> BlockValueNames;                  // block local variables
+static std::stack<bool> BlockReturned;                                      // if the block has returned
 static std::stack<std::map<std::string, AllocaInst*>*> OldNamedValues;      // hidden variables
 static std::map<std::string, AllocaInst*> NamedValues;                      // visible variables
 // Function
@@ -1558,6 +1560,7 @@ Value *BodyAST::codegen() {
   Value *Result;
   for (auto &S : Stmts) {
     Result = S->codegen();
+    if (HasReturned) break;
   }
   return Result;
 }
@@ -1636,6 +1639,7 @@ Value *BlockAST::codegen() {
   Value *Result;
   for (auto &S : Stmts) {
     Result = S->codegen();
+    if (BlockReturned.top()) break;
   }
   return Result;
 }
@@ -1662,6 +1666,7 @@ Value *IfStmtAST::codegen() {
 
   // Emit then block.
   Builder->SetInsertPoint(ThenBB);
+  BlockReturned.push(false);
 
   std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
@@ -1670,10 +1675,13 @@ Value *IfStmtAST::codegen() {
   Then->codegen();
   LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
-  Builder->CreateBr(MergeBB);
+  if (!BlockReturned.top())
+    Builder->CreateBr(MergeBB);
+  BlockReturned.pop();
 
   // Emit else block.
   Builder->SetInsertPoint(ElseBB);
+  BlockReturned.push(false);
   
   if (Else) {
     std::set<std::string> scopeNames;
@@ -1684,7 +1692,9 @@ Value *IfStmtAST::codegen() {
     LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
   }
 
-  Builder->CreateBr(MergeBB);
+  if (!BlockReturned.top())
+    Builder->CreateBr(MergeBB);
+  BlockReturned.pop();
 
   // Emit merge block.
   Builder->SetInsertPoint(MergeBB);
@@ -1708,6 +1718,7 @@ Value *WhileStmtAST::codegen() {
   Builder->CreateCondBr(CondV, LoopBB, AfterBB);
 
   Builder->SetInsertPoint(LoopBB);
+  BlockReturned.push(false);
 
   std::set<std::string> scopeNames;
   std::map<std::string, AllocaInst*> scopeValues;
@@ -1716,6 +1727,8 @@ Value *WhileStmtAST::codegen() {
   Loop->codegen();
   LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
+  if (!BlockReturned.top()) {
+
   CondV = Cond->codegen();
   if (!CondV)
     return nullptr;
@@ -1723,6 +1736,9 @@ Value *WhileStmtAST::codegen() {
     CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
   CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
   Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  }
+  BlockReturned.pop();
 
   Builder->SetInsertPoint(AfterBB);
 
@@ -1758,7 +1774,11 @@ Value *ForStmtAST::codegen() {
 
   Builder->SetInsertPoint(LoopBB);
 
+  BlockReturned.push(false);
+
   Loop->codegen();
+
+  if (!BlockReturned.top()) {
 
   Simp->codegen();
 
@@ -1769,6 +1789,9 @@ Value *ForStmtAST::codegen() {
     CondV = Builder->CreateUIToFP(CondV, Type::getDoubleTy(*TheContext), "tmp");
   CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
   Builder->CreateCondBr(CondV, LoopBB, AfterBB);
+
+  }
+  BlockReturned.pop();
 
   LeaveBlock(&scopeNames, &scopeValues, &scopeStructValues);
 
@@ -1785,8 +1808,13 @@ Value *RetStmtAST::codegen() {
   TypeCast(T, RetVal);
 
   Builder->CreateRet(RetVal);
-  if (BlockValueNames.empty())
+  
+  if (BlockValueNames.empty()) {
     HasReturned = true;
+  } else {
+    BlockReturned.pop();
+    BlockReturned.push(true);
+  }
 
   return Constant::getNullValue(Type::getDoubleTy(*TheContext));
 }
@@ -1837,7 +1865,12 @@ Function *FunctionAST::codegen() {
       Builder->CreateRet(RetVal);
     }
     // Validate the generated code, checking for consistency.
-    verifyFunction(*TheFunction);
+    if (verifyFunction(*TheFunction)) {
+      // Error reading body, remove function
+      std::cout << "Error reading body, remove function." << std::endl;
+      TheFunction->eraseFromParent();
+      return nullptr;
+    }
     return TheFunction;
   }
 
