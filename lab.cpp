@@ -243,7 +243,6 @@ static int gettok() {
     return op[0];
   }
 
-
   // Comment.
   if (LastChar == '#') {
     do
@@ -254,11 +253,9 @@ static int gettok() {
       return gettok();
   }
 
-
   // Check for end of file.
   if (LastChar == EOF)
     return tok_eof;
-
 
   // Otherwise, just return the character as its ascii value.
   int ThisChar = LastChar;
@@ -928,8 +925,9 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
     return LogErrorS("Expected '(' in for statemet");
   getNextToken(); // eat '('
 
-  auto Decl = ParseDeclStatement();
-
+  std::unique_ptr<StmtAST> Decl;
+  if (CurTok != ';')
+    Decl = ParseDeclStatement();
   if (CurTok != ';')
     return LogErrorS("Expected ';' in for statement");
   getNextToken(); // eat ';'
@@ -940,8 +938,9 @@ static std::unique_ptr<StmtAST> ParseForStatement() {
     return LogErrorS("Expected ';' in for statement");
   getNextToken(); // eat ';'
 
-  auto Simp = ParseSimpStatement();
-
+  std::unique_ptr<StmtAST> Simp;
+  if (CurTok != ')')
+    Simp = ParseSimpStatement();
   if (CurTok != ')')
     return LogErrorS("Expected ')' in for statement");
   getNextToken(); // eat ')'
@@ -1767,7 +1766,7 @@ Value *ForStmtAST::codegen() {
   std::map<std::string, std::string> scopeStructValues;
   EnterBlock(&scopeNames, &scopeValues, &scopeStructValues);
   
-  Decl->codegen();
+  if (Decl) Decl->codegen();
 
   Builder->CreateBr(CondBB);
 
@@ -1787,7 +1786,7 @@ Value *ForStmtAST::codegen() {
   Loop->codegen();
 
   if (!BlockReturned.top()) {
-    Simp->codegen();
+    if (Simp) Simp->codegen();
     Builder->CreateBr(CondBB);
   }
   BlockReturned.pop();

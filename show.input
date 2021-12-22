@@ -1,0 +1,33 @@
+double condition(int n) {
+    double a = 12.3, b = 4.56;
+    if (a == 12.3) {
+        int a = 1;
+        if (b == 4.56) {
+            int b = 2;
+            int a = a + b;
+            if (n == 1) {
+                return a;
+            }
+        }
+    }
+    # it will not be ruined by "int a" in the block
+    return a;
+}
+
+int loop() {
+    int i, j = 0;
+    i = 100;
+    for( ; j < i; ) {
+        j = j + 1; # add j until j == i
+    }
+    return j; # return 100
+}
+
+# another version of loop()
+int loopEX() {
+    int j = 0;
+    for (int i = 100; j < i; j = j + 1) {
+        # do nothing
+    }
+    return j;
+}

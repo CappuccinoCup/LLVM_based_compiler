@@ -40,7 +40,7 @@ Our goal is to complete these rules:
 <simp>			::= <val>=<exp>
 <control>		::= if(<exp>)<block>[else<block>]
 					|while(<exp>)<block>
-					|for([<decl>];[<exp>];[<simp>])<block>
+					|for([<decl>];<exp>;[<simp>])<block>
 <block>			::= <stmt>|{<stmt>*}
 <return>		::= return <exp>
 
